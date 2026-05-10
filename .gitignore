@@ -1,0 +1,12 @@
+# Não commitar nada do sistema operacional ou editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Caches locais (não devem existir nesta pasta, mas defensivo)
+node_modules/
+.cache/

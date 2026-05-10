@@ -1,0 +1,33 @@
+<!doctype html>
+<!--
+  ============================================================================
+  iNat Species Quiz — versão 100% estática (HTML + CSS + JS, sem build)
+  ============================================================================
+  Esta página chama a API pública do iNaturalist (api.inaturalist.org)
+  diretamente do navegador. O iNat tem CORS habilitado para GET, então
+  não é preciso servidor intermediário.
+
+  Pode ser hospedada em qualquer lugar que sirva arquivos estáticos:
+  GitHub Pages, Netlify, Vercel, Cloudflare Pages, ou apenas servida
+  localmente com `python -m http.server 8080`.
+
+  Toda a lógica do quiz, pontuação, histórico e prefetch acontece no
+  cliente — nada é enviado para servidores próprios.
+  ============================================================================
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Quiz de adivinhar espécies com fotos do iNaturalist. Versão 100% cliente." />
+    <meta name="theme-color" content="#0c1814" />
+    <title>iNat Species Quiz</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Container raiz: o JS popula tudo aqui dentro. -->
+    <div id="root"></div>
+    <!-- ES Modules: cada arquivo importa explicitamente o que precisa. -->
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
