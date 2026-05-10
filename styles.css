@@ -6195,21 +6195,35 @@ body.force-mobile-layout .data-panel .pagination-row.numbered-pagination {
    .image-frame (height: 100%) ter altura — mas sem altura no pai do
    grid, a row 1 colapsava abaixo do mínimo declarado pelo minmax.
 
-   Solução: forçamos um min-height absoluto na .quiz-stage no answered-shell
-   e damos altura concreta na row 1 (a foto) e row 2 (a play-column). */
+   Solução: usamos `1fr` na primeira row (que ABSORVE qualquer espaço extra
+   do stage, fazendo a foto crescer até preencher), em vez de `minmax(min,
+   auto)` que deixava o excedente cair na row 2 e o `justify-content: flex-end`
+   do play-column empurrava as alternativas para baixo, criando vácuo entre
+   a foto e os botões.
+
+   Também removemos `min-height` no stage para que ele siga o conteúdo —
+   o `min-height` da media-column garante a altura mínima da foto, sem
+   excedente para distribuir. */
 body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage,
 body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage.is-answered,
 body.force-mobile-layout .app-shell.answered-shell .quiz-stage.mobile-stage.is-answered {
-  grid-template-rows: minmax(280px, auto) auto !important;
+  /* row 1 (foto): pelo menos 280px, e CRESCE para absorver excedente.
+     row 2 (alternativas + feedback): altura intrínseca exata. */
+  grid-template-rows: minmax(280px, 1fr) auto !important;
+  /* min-height igual ao conteúdo natural (foto 280 + gap 8 + play ~250). */
   min-height: 540px !important;
   height: auto !important;
+  /* Importante: stretch (não start) para que a foto realmente ocupe a row inteira. */
+  align-content: stretch !important;
 }
 
-/* Garante que a media-column estique sua row inteira. */
+/* Garante que a media-column ocupe TODA a primeira row do stage,
+   incluindo qualquer espaço extra que o `1fr` capture. */
 body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage .media-column,
 body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage.is-answered .media-column {
   min-height: 280px !important;
   height: 100% !important;
+  align-self: stretch !important;
 }
 
 /* Garante quiz-card (que é display:grid no CSS base) ocupar a coluna toda. */
@@ -6219,12 +6233,24 @@ body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stag
   min-height: 280px !important;
 }
 
+/* CRÍTICO: anula o `justify-content: flex-end` do play-column no answered.
+   Esse flex-end era a causa do vácuo entre foto e alternativas — quando o
+   play-column ficava maior que o conteúdo, ele empurrava o conteúdo para
+   o fim, deixando espaço em branco no topo. Com `flex-start`, o conteúdo
+   começa logo após a foto, sem gap. */
+body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage.mobile-stage .play-column,
+body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage.mobile-stage.is-answered .play-column,
+body.force-mobile-layout #root .app-shell.answered-shell .quiz-stage.mobile-stage .play-column,
+body.force-mobile-layout #root .app-shell.answered-shell .quiz-stage.mobile-stage.is-answered .play-column {
+  justify-content: flex-start !important;
+}
+
 /* Em mobile (≤ 600px), a foto ocupa proporcionalmente mais espaço. */
 @media (max-width: 600px) {
   body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage,
   body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage.is-answered,
   body.force-mobile-layout .app-shell.answered-shell .quiz-stage.mobile-stage.is-answered {
-    grid-template-rows: minmax(220px, auto) auto !important;
+    grid-template-rows: minmax(220px, 1fr) auto !important;
     min-height: 460px !important;
   }
   body.force-mobile-layout #root .app-shell.answered-shell .game-screen .quiz-stage .media-column,
