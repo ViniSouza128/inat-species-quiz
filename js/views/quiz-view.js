@@ -362,6 +362,7 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
 
   function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
   function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
 
   function onWheel(event) {
     event.preventDefault();
@@ -377,8 +378,17 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
     pointers.set(event.pointerId, point);
     if (pointers.size === 1) lastDragPoint = point;
     if (pointers.size === 2) {
+      // Quando o 2º dedo encosta, capturamos o estado inicial completo
+      // do gesto: distância (para zoom), midpoint (para pan simultâneo),
+      // e o pan/zoom atuais (para os deltas serem relativos a este momento).
       const pts = [...pointers.values()];
-      pinchStart = { distance: distance(pts[0], pts[1]), zoom };
+      pinchStart = {
+        distance: distance(pts[0], pts[1]),
+        zoom,
+        midpoint: midpoint(pts[0], pts[1]),
+        panX: pan.x,
+        panY: pan.y
+      };
     }
   }
   function onPointerMove(event) {
@@ -386,9 +396,21 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
     const next = { x: event.clientX, y: event.clientY };
     pointers.set(event.pointerId, next);
     if (pointers.size === 2 && pinchStart) {
+      // Pinch + pan SIMULTÂNEOS:
+      //   • zoom = ratio das distâncias entre os 2 dedos.
+      //   • pan = deslocamento do PONTO MÉDIO entre os 2 dedos (relativo ao
+      //     midpoint inicial), somado ao pan que já tínhamos antes do gesto.
+      // Isso permite "pegar e arrastar" a foto enquanto dá zoom — os 2
+      // dedos se afastam/aproximam para zoom E também deslizam pra pan.
       const pts = [...pointers.values()];
-      const ratio = distance(pts[0], pts[1]) / Math.max(1, pinchStart.distance);
+      const newDist = distance(pts[0], pts[1]);
+      const newMid = midpoint(pts[0], pts[1]);
+      const ratio = newDist / Math.max(1, pinchStart.distance);
       zoom = clamp(pinchStart.zoom * ratio, 1, 4);
+      const dx = newMid.x - pinchStart.midpoint.x;
+      const dy = newMid.y - pinchStart.midpoint.y;
+      pan.x = clamp(pinchStart.panX + dx, -240, 240);
+      pan.y = clamp(pinchStart.panY + dy, -240, 240);
       applyTransform();
       return;
     }
@@ -404,6 +426,9 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
   function onPointerUp(event) {
     pointers.delete(event.pointerId);
     pinchStart = null;
+    // Se sobrou 1 dedo após sair do pinch, o drag continua a partir da
+    // posição atual desse dedo — sem "saltar" porque não usamos o ponto
+    // anterior, e sim o ponto vivo agora.
     lastDragPoint = pointers.size === 1 ? [...pointers.values()][0] : null;
     if (zoom <= 1.01) resetView();
   }
