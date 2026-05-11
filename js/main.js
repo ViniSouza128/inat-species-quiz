@@ -30,7 +30,7 @@ import {
 } from './views/quiz-view.js';
 import {
   renderSettingsView, runTaxonSearch, runPlaceSearch,
-  setTaxonQuery, setPlaceQuery, normalizeGroups
+  setTaxonQuery, setPlaceQuery, normalizeGroups, toggleCbox
 } from './views/settings-view.js';
 import { renderDataView, getDataLocal, setDataLocal } from './views/data-view.js';
 
@@ -99,8 +99,11 @@ function timerStateClass() {
 }
 
 function shellClasses() {
+  // Classes auxiliares no app-shell — usadas pelo CSS para variar estilos
+  // por estado (ex.: timer-critical pinta o HUD de vermelho).
   return [
-    'app-shell', 'phone-app', `mode-${state.mode}`,
+    'app-shell',
+    `mode-${state.mode}`,
     state.answerResult ? 'answered-shell' : '',
     state.answering ? 'answering-shell' : '',
     state.loading ? 'loading-shell' : '',
@@ -111,7 +114,6 @@ function shellClasses() {
 function renderShell() {
   // Faz cleanup das interatividades anexadas no render anterior.
   if (state.detachImage) { state.detachImage(); state.detachImage = null; }
-  if (state.detachAnswerHeights) { state.detachAnswerHeights(); state.detachAnswerHeights = null; }
 
   let mainContent = '';
   if (state.mode === 'game') {
@@ -126,33 +128,40 @@ function renderShell() {
     mainContent = renderDataView(state.stats, state.history);
   }
 
-  // CRÍTICO: o CSS usa o seletor `#root .app-shell`, então .app-shell
-  // precisa ser um FILHO de #root (não o próprio #root). Replica a
-  // estrutura DOM da versão React.
+  // Estrutura v2 (espelha App.tsx do app React): flex column 100dvh com
+  // app-main (1fr) + bottom-nav (auto, flush base).
   root.className = '';
   root.innerHTML = `
     <div class="${shellClasses()}">
-      <main class="phone-main" aria-label="${escapeHtml(modeTitle(state.mode))}">
-        ${mainContent}
-      </main>
+      ${mainContent}
       <nav class="bottom-nav" aria-label="Navegação principal">
-        <button type="button" class="${state.mode === 'game' ? 'active' : ''}" data-action="set-mode" data-mode="game"><span aria-hidden="true">🌿</span><strong>Quiz</strong></button>
-        <button type="button" class="${state.mode === 'config' ? 'active' : ''}" data-action="set-mode" data-mode="config"><span aria-hidden="true">⚙️</span><strong>Config</strong></button>
-        <button type="button" class="${state.mode === 'stats' ? 'active' : ''}" data-action="set-mode" data-mode="stats"><span aria-hidden="true">📊</span><strong>Dados</strong></button>
+        <button type="button" class="bottom-nav-item ${state.mode === 'game' ? 'is-active' : ''}" data-action="set-mode" data-mode="game">
+          <span class="icon" aria-hidden="true">🌿</span>
+          <span>Quiz</span>
+        </button>
+        <button type="button" class="bottom-nav-item ${state.mode === 'config' ? 'is-active' : ''}" data-action="set-mode" data-mode="config">
+          <span class="icon" aria-hidden="true">⚙</span>
+          <span>Config</span>
+        </button>
+        <button type="button" class="bottom-nav-item ${state.mode === 'stats' ? 'is-active' : ''}" data-action="set-mode" data-mode="stats">
+          <span class="icon" aria-hidden="true">📊</span>
+          <span>Dados</span>
+        </button>
       </nav>
       ${state.infoModalOpen && state.question ? renderInfoModal(state.question) : ''}
     </div>
   `;
 
-  // Anexa interatividades específicas do quiz stage.
+  // Garante type="button" em todos os botões recém-renderizados.
+  root.querySelectorAll('button:not([type])').forEach((b) => { b.type = 'button'; });
+
+  // Anexa interatividade da foto (zoom/pan + carregamento progressivo).
   if (state.mode === 'game' && state.question && !state.loading) {
-    const stageRoot = root.querySelector('.quiz-stage');
-    if (stageRoot) {
-      state.detachImage = attachImageInteractivity(stageRoot, state.question, () => {
-        // foto principal falhou: pula a pergunta automaticamente
+    const quizScreen = root.querySelector('.quiz-screen');
+    if (quizScreen) {
+      state.detachImage = attachImageInteractivity(quizScreen, state.question, () => {
         nextQuestion();
       });
-      state.detachAnswerHeights = equalizeAnswerHeights(stageRoot);
     }
   }
 }
@@ -375,7 +384,13 @@ function setMode(mode) {
 }
 
 function applySettingsTheme() {
-  document.documentElement.dataset.theme = state.settings.theme;
+  // Resolve "auto" para o tema do sistema. O setting persistido continua
+  // "auto", mas o atributo data-theme no <html> é sempre dark/light.
+  const t = state.settings.theme;
+  const resolved = t === 'auto'
+    ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : (t === 'light' ? 'light' : 'dark');
+  document.documentElement.dataset.theme = resolved;
 }
 
 function updateSettings(partial) {
@@ -429,7 +444,20 @@ function toggleGroup(groupValue) {
 // EVENT DELEGATION — um único listener captura tudo via data-action
 // ---------------------------------------------------------------------------
 
+// Resolve o tema "auto" para o tema real conforme prefers-color-scheme.
+function resolvedTheme(themeSetting) {
+  if (themeSetting === 'auto') {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  return themeSetting === 'light' ? 'light' : 'dark';
+}
+
 document.addEventListener('click', async (event) => {
+  // Prevent default em qualquer <button> — botões sem handler não devem
+  // disparar scroll-to-top ou outras ações nativas inesperadas.
+  const btn = event.target.closest('button');
+  if (btn) event.preventDefault();
+
   const target = event.target.closest('[data-action]');
   if (!target) return;
   const action = target.dataset.action;
@@ -463,12 +491,9 @@ document.addEventListener('click', async (event) => {
       return;
 
     case 'close-modal': {
-      // Fecha apenas se o clique foi NO backdrop em si (não em algo dentro do modal)
-      // OU no botão "Fechar" da head do modal.
-      const clickedInsideModal = event.target.closest('[data-modal]');
-      const clickedCloseButton = event.target.closest('button.ghost') && clickedInsideModal;
-      const clickedBackdrop = event.target.classList.contains('modal-backdrop');
-      if (clickedBackdrop || clickedCloseButton) {
+      const onBackdrop = event.target.classList.contains('modal-backdrop');
+      const onCloseBtn = Boolean(event.target.closest('button[data-action="close-modal"]'));
+      if (onBackdrop || onCloseBtn) {
         state.infoModalOpen = false;
         render();
       }
@@ -479,41 +504,89 @@ document.addEventListener('click', async (event) => {
       toggleGroup(target.dataset.group);
       return;
 
+    // Multi-select de filtros (Locais / Táxons)
     case 'pick-taxon':
       updateSettings({
-        taxonId: Number(target.dataset.taxonId),
-        taxonLabel: target.dataset.taxonLabel
+        taxonId: Number(target.dataset.id),
+        taxonLabel: target.dataset.label
       });
       return;
-
     case 'pick-place':
       updateSettings({
-        placeId: Number(target.dataset.placeId),
-        placeLabel: target.dataset.placeLabel
+        placeId: Number(target.dataset.id),
+        placeLabel: target.dataset.label
       });
       return;
-
     case 'clear-taxon':
+      // Só remove se o clique foi no botão ✕ (evita remover ao clicar no chip)
+      if (!event.target.closest('button')) return;
       updateSettings({ taxonId: null, taxonLabel: null });
       return;
-
     case 'clear-place':
+      if (!event.target.closest('button')) return;
       updateSettings({ placeId: null, placeLabel: null });
       return;
+    case 'quick-place': {
+      const q = target.dataset.quick;
+      if (state.settings.placeLabel === q) {
+        updateSettings({ placeId: null, placeLabel: null });
+      } else {
+        // Dispara busca + auto-pick do primeiro resultado
+        setPlaceQuery(q);
+        await runPlaceSearch(q);
+        const first = (await import('./views/settings-view.js')).getSettingsLocal().placeResults[0];
+        if (first) updateSettings({ placeId: first.id, placeLabel: first.display_name || first.name });
+        else render();
+      }
+      return;
+    }
+    case 'quick-taxon': {
+      const q = target.dataset.quick;
+      if (state.settings.taxonLabel === q) {
+        updateSettings({ taxonId: null, taxonLabel: null });
+      } else {
+        setTaxonQuery(q);
+        await runTaxonSearch();
+        const first = (await import('./views/settings-view.js')).getSettingsLocal().taxaResults[0];
+        if (first) updateSettings({ taxonId: first.id, taxonLabel: first.preferred_common_name ?? first.name });
+        else render();
+      }
+      return;
+    }
 
     case 'search-taxon':
       await runTaxonSearch();
       render();
       return;
-
     case 'search-place':
       await runPlaceSearch();
       render();
       return;
 
-    case 'search-place-brazil':
-      await runPlaceSearch('Brazil');
+    // Boxes colapsáveis em Config
+    case 'toggle-cbox':
+      toggleCbox(target.dataset.cbox);
       render();
+      return;
+
+    // Segmented buttons (difficulty / theme)
+    case 'set-difficulty':
+      updateSettings({ difficulty: target.dataset.difficulty });
+      return;
+    case 'set-theme': {
+      const t = target.dataset.theme;
+      const resolved = resolvedTheme(t);
+      document.documentElement.dataset.theme = resolved;
+      updateSettings({ theme: t });
+      return;
+    }
+
+    // Toggles (popular / scientific-only)
+    case 'toggle-popular':
+      updateSettings({ showPopularName: !(state.settings.showPopularName !== false) });
+      return;
+    case 'toggle-scientific-only':
+      updateSettings({ scientificOnly: !state.settings.scientificOnly });
       return;
 
     case 'reset-stats': {
@@ -531,30 +604,20 @@ document.addEventListener('click', async (event) => {
       clearHistory();
       return;
 
-    case 'toggle-filters': {
-      const dl = getDataLocal();
-      setDataLocal({ filtersOpen: !dl.filtersOpen });
-      render();
-      return;
-    }
-
     case 'set-filter':
       setDataLocal({ filter: target.dataset.filter, page: 1 });
       render();
       return;
-
     case 'set-page':
       setDataLocal({ page: Number(target.dataset.page) });
       render();
       return;
-
     case 'prev-page': {
       const dl = getDataLocal();
       setDataLocal({ page: Math.max(1, dl.page - 1) });
       render();
       return;
     }
-
     case 'next-page': {
       const dl = getDataLocal();
       setDataLocal({ page: dl.page + 1 });
@@ -567,47 +630,114 @@ document.addEventListener('click', async (event) => {
   }
 });
 
-// Change handlers (selects, checkboxes, inputs)
-document.addEventListener('change', (event) => {
-  const target = event.target.closest('[data-action]');
-  if (!target) return;
-  const action = target.dataset.action;
-  switch (action) {
-    case 'set-difficulty':
-      updateSettings({ difficulty: target.value });
-      return;
-    case 'set-theme':
-      updateSettings({ theme: target.value });
-      return;
-    case 'toggle-scientific-only':
-      updateSettings({ scientificOnly: target.checked });
-      return;
-    default:
-      return;
-  }
-});
-
-// Input listeners (apenas para os campos de busca: guardar query localmente)
+// Input listeners (campos de busca e slider de volume)
 document.addEventListener('input', (event) => {
-  const target = event.target.closest('[data-input]');
-  if (!target) return;
-  if (target.dataset.input === 'taxon') setTaxonQuery(target.value);
-  if (target.dataset.input === 'place') setPlaceQuery(target.value);
-});
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
 
-// ESC fecha modal
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && state.infoModalOpen) {
-    state.infoModalOpen = false;
+  // Slider de volume — sincroniza pintura + valor exibido em tempo real
+  if (target.classList.contains('volume-slider')) {
+    const v = Number(target.value);
+    const pct = `${v}%`;
+    target.style.setProperty('--vol', pct);
+    const parent = target.closest('.volume-control');
+    if (parent) {
+      parent.style.setProperty('--vol', pct);
+      const num = parent.querySelector('.vol-num');
+      if (num) num.textContent = pct;
+      const icon = parent.querySelector('.vol-icon');
+      if (icon) icon.dataset.vol = String(v);
+    }
+    // Persiste sem re-render para não interromper o drag
+    state.settings = { ...state.settings, soundVolume: v, choices: 4 };
+    saveSettings(state.settings);
+    return;
+  }
+
+  // Campos de busca (filtros)
+  const actionTarget = target.closest('[data-input]');
+  if (!actionTarget) return;
+  if (actionTarget.dataset.input === 'taxon') setTaxonQuery(actionTarget.value);
+  if (actionTarget.dataset.input === 'place') setPlaceQuery(actionTarget.value);
+  if (actionTarget.dataset.input === 'history-search') {
+    setDataLocal({ searchQuery: actionTarget.value, page: 1 });
     render();
   }
 });
 
 // ---------------------------------------------------------------------------
-// BOOTSTRAP — força layout mobile, aplica tema e dispara primeiro prefetch
+// KEYBOARD SHORTCUTS — atalhos do quiz
+// ---------------------------------------------------------------------------
+// 1/2/3/4: responde alternativa por posição
+// D:       revela próxima dica
+// S:       pula
+// Enter/Espaço/→: próxima pergunta (pós-resposta)
+// I:       abre modal de detalhes (pós-resposta)
+// Esc:     fecha modal aberto
+// Ignora quando foco está em input/textarea/contenteditable.
+
+document.addEventListener('keydown', (event) => {
+  const tgt = event.target;
+  const isField = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable);
+
+  if (event.key === 'Escape' && state.infoModalOpen) {
+    state.infoModalOpen = false;
+    render();
+    return;
+  }
+  if (isField) return;
+
+  if (state.mode !== 'game' || !state.question) return;
+
+  const pending = !state.answerResult && !state.answering;
+  const answered = Boolean(state.answerResult);
+
+  if (pending) {
+    if (['1', '2', '3', '4'].includes(event.key)) {
+      event.preventDefault();
+      const i = Number(event.key) - 1;
+      const c = state.question.choices[i];
+      if (c) void answer(c.taxonId);
+      return;
+    }
+    if (event.key === 'd' || event.key === 'D') {
+      event.preventDefault();
+      if (state.hintLevel < 2) {
+        primeUiAudio(); playUiSound('hint');
+        state.hintLevel = Math.min(2, state.hintLevel + 1);
+        render();
+      }
+      return;
+    }
+    if (event.key === 's' || event.key === 'S') {
+      event.preventDefault();
+      primeUiAudio(); playUiSound('advance');
+      void nextQuestion();
+      return;
+    }
+  }
+
+  if (answered) {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      primeUiAudio(); playUiSound('advance');
+      void nextQuestion();
+      return;
+    }
+    if (event.key === 'i' || event.key === 'I') {
+      event.preventDefault();
+      state.infoModalOpen = true;
+      render();
+      return;
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// BOOTSTRAP — aplica tema, normaliza buttons sem type e dispara prefetch
 // ---------------------------------------------------------------------------
 
-document.body.classList.add('force-mobile-layout');
+// renderShell já normaliza buttons sem type após cada innerHTML.
 applySettingsTheme();
 render();
 void fillPrefetchQueue();

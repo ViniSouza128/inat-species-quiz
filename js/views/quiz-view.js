@@ -1,14 +1,26 @@
 // =============================================================================
-// QUIZ VIEW — tela principal com foto + 4 alternativas + feedback panel
+// QUIZ VIEW — tela principal com foto + 4 alternativas + feedback dock
 // =============================================================================
 // Construído com innerHTML (templates simples) + delegation. Sem framework.
-// Equivalente a App.tsx + QuizCard + AnswerGrid + FeedbackPanel.
+// Espelha o design system v2 (mockup/index-v2.html) + componentes React em
+// client/src/components/{QuizCard,HudBar,AnswerGrid,FeedbackPanel,InfoModal}.
+//
+// Estrutura:
+//   <section.app-main>
+//     <div.hud> ............................ HUD pill (pts/streak/precisão/bônus)
+//     <div.quiz-screen>
+//       <section.hero> ..................... foto (com zoom gestual)
+//       <div.play>
+//         <div.feedback> ................... dock acima das alternativas
+//         <div.choices[data-mode]> ......... 4 alternativas
 // =============================================================================
 
-import { escapeHtml, formatDate, html } from '../format.js';
+import { escapeHtml, formatDate } from '../format.js';
 import { POPULAR_NAME_BY_SCIENTIFIC } from '../quiz-engine.js';
 
-// Helpers de display ----------------------------------------------------------
+// ---------------------------------------------------------------------------
+// HELPERS DE DISPLAY
+// ---------------------------------------------------------------------------
 
 function bestChoiceImage(choice) {
   return choice.image?.mediumUrl || choice.image?.smallUrl || choice.image?.largeUrl || choice.image?.thumbUrl || null;
@@ -38,22 +50,16 @@ function normalizedAncestorScientific(choice) {
   return raw;
 }
 
-function labelForChoice(choice, scientificOnly, hintLevel, answered) {
-  if (scientificOnly) {
-    return { title: choice.scientificName, subtitle: null, metaLines: [] };
-  }
-  const directCommonName = normalizedCommonName(choice);
-  const mappedAncestorCommon = mappedPopularFromAncestor(choice);
-  const fallbackAncestorScientific = normalizedAncestorScientific(choice);
-  const title = directCommonName ?? mappedAncestorCommon ?? fallbackAncestorScientific ?? choice.scientificName;
+/** Resolve título (nome popular) + subtítulo (nome científico). */
+function labelForChoice(choice, scientificOnly) {
+  if (scientificOnly) return { title: choice.scientificName, subtitle: null };
+  const direct = normalizedCommonName(choice);
+  const mapped = mappedPopularFromAncestor(choice);
+  const ancestor = normalizedAncestorScientific(choice);
+  const title = direct ?? mapped ?? ancestor ?? choice.scientificName;
   const subtitle = title.localeCompare(choice.scientificName, 'pt-BR', { sensitivity: 'base' }) === 0
     ? null : choice.scientificName;
-  const metaLines = [];
-  if (!answered) {
-    if (hintLevel >= 1 && choice.familyScientificName) metaLines.push(`família: ${choice.familyScientificName}`);
-    if (hintLevel >= 2 && choice.orderScientificName) metaLines.push(`ordem: ${choice.orderScientificName}`);
-  }
-  return { title, subtitle, metaLines };
+  return { title, subtitle };
 }
 
 function cleanAttribution(raw) {
@@ -72,14 +78,6 @@ function visibleAuthor(question) {
     || cleanAttribution(question.image.attribution);
 }
 
-function rankLabel(rank) {
-  const map = {
-    species: 'espécie', genus: 'gênero', family: 'família',
-    order: 'ordem', class: 'classe', phylum: 'filo', kingdom: 'reino'
-  };
-  return rank ? map[rank] ?? rank : 'táxon';
-}
-
 function displayName(question) {
   if (question.answer.commonName && question.answer.commonName !== question.answer.scientificName) {
     return question.answer.commonName;
@@ -90,178 +88,263 @@ function displayName(question) {
   return question.answer.scientificName;
 }
 
+function rankLabel(rank) {
+  const map = { species: 'espécie', genus: 'gênero', family: 'família', order: 'ordem', class: 'classe', phylum: 'filo', kingdom: 'reino' };
+  return rank ? map[rank] ?? rank : 'táxon';
+}
+
 // ---------------------------------------------------------------------------
-// RENDER STATES
+// HUD (pontos / streak / precisão / bônus regressivo)
 // ---------------------------------------------------------------------------
 
-function startScreen() {
+function renderHud(state) {
+  const { stats, currentBonusPoints } = state;
+  const bonusStart = 75; // referência para a largura da barra (varia por difficulty no real)
+  const bonusPct = Math.max(0, Math.min(100, Math.round((currentBonusPoints / bonusStart) * 100)));
   return `
-    <div class="start-screen-card compact-card">
-      <p class="intro-icon" aria-hidden="true">🌿</p>
-      <h1>iNat Species Quiz</h1>
-      <p>Adivinhe a espécie pela foto. O bônus de tempo é regressivo: você começa com um bônus alto e ele cai a cada segundo.</p>
-      <button type="button" data-action="advance">Começar</button>
+    <div class="hud" role="status">
+      <div class="hud-stats">
+        <span class="hud-stat score"><span class="num tnum">${stats.score}</span><span class="lbl">pts</span></span>
+        <span class="hud-stat streak"><span class="num tnum">${stats.currentStreak}</span><span class="lbl">streak</span></span>
+        <span class="hud-stat acc"><span class="num tnum">${stats.accuracy}%</span><span class="lbl">precisão</span></span>
+      </div>
+      <div class="hud-bonus" aria-label="Bônus de tempo">
+        <span class="lbl">Bônus</span>
+        <div class="bar" aria-hidden="true"><span style="--bonus:${bonusPct}%"></span></div>
+        <span class="val tnum">+${currentBonusPoints}</span>
+      </div>
     </div>
   `;
 }
 
-function loadingScreen(hasPrefetch) {
-  const msg = hasPrefetch ? 'Abrindo a próxima rodada...' : 'Buscando a próxima observação...';
+// ---------------------------------------------------------------------------
+// CENTER CARDS (start / loading / error)
+// ---------------------------------------------------------------------------
+
+function startCard() {
   return `
-    <div class="compact-loading-shell compact-card">
-      <p class="loading-emoji" aria-hidden="true">🔎</p>
-      <h2>Carregando</h2>
+    <div class="center-card">
+      <div class="icon-disc" aria-hidden="true">🌿</div>
+      <h1>Adivinhe a espécie</h1>
+      <p>Veja uma foto real de observação pública do iNaturalist e escolha entre 4 alternativas. O bônus começa alto e cai a cada segundo.</p>
+      <button type="button" class="btn btn-primary" data-action="advance">Começar partida →</button>
+    </div>
+  `;
+}
+
+function loadingCard(hasPrefetch) {
+  const msg = hasPrefetch ? 'Abrindo a próxima rodada…' : 'Buscando uma espécie compatível com seus filtros…';
+  return `
+    <div class="center-card">
+      <div class="loader-spinner" aria-hidden="true"></div>
+      <h1 style="font-size: 22px; margin-top: 8px;">Carregando observação</h1>
       <p>${escapeHtml(msg)}</p>
     </div>
   `;
 }
 
-function errorScreen(error) {
+function errorCard(error) {
   return `
-    <div class="compact-loading-shell compact-card">
-      <p class="loading-emoji" aria-hidden="true">⚠️</p>
-      <h2>Não deu certo</h2>
-      <p>${escapeHtml(error)}</p>
-      <button type="button" data-action="advance">Tentar novamente</button>
+    <div class="center-card">
+      <div class="icon-disc" aria-hidden="true" style="background: linear-gradient(135deg, var(--err), #ef4444);">⚠</div>
+      <h1>Não deu certo</h1>
+      <p>${escapeHtml(error || 'Não encontrei observações suficientes com esses filtros.')}</p>
+      <button type="button" class="btn btn-primary" data-action="advance" style="padding: 14px 28px;">Tentar novamente</button>
     </div>
   `;
 }
 
 // ---------------------------------------------------------------------------
-// QUIZ STAGE — pergunta + alternativas + feedback
+// HERO (foto + créditos)
 // ---------------------------------------------------------------------------
 
-export function renderQuizStage(state) {
-  const { question, settings, answered, answering, selectedTaxonId, answerResult, hintLevel, currentBonusPoints } = state;
-
-  // Imagem inicial: começa em smallUrl, JS depois faz progressão.
+function renderHero(question, answered) {
   const photoSrc = question.image.smallUrl || question.image.url;
   const author = visibleAuthor(question);
+  const alt = answered
+    ? `Foto de ${question.answer.commonName ?? question.answer.scientificName}`
+    : 'Foto de uma espécie para adivinhar';
+  const stateAttr = answered ? 'answered' : 'idle';
+  return `
+    <section class="hero" data-state="${stateAttr}" data-zoomed="false" data-image-frame>
+      <img class="hero-img blur" data-image-backdrop src="${escapeHtml(photoSrc)}" alt="" aria-hidden="true" draggable="false" />
+      <img class="hero-img zoomable" data-zoomable src="${escapeHtml(photoSrc)}" alt="${escapeHtml(alt)}" draggable="false" />
+      <div class="hero-credit" title="${escapeHtml(question.image.attribution ?? author)}">
+        <div class="author">
+          <small>Foto por</small>
+          <strong>${escapeHtml(author)}</strong>
+        </div>
+        <span class="lic">${escapeHtml(question.image.licenseCode ?? 'licença n/d')}</span>
+      </div>
+    </section>
+  `;
+}
 
-  // Alternativas
-  const choicesHtml = question.choices.slice(0, 4).map((choice, index) => {
+// ---------------------------------------------------------------------------
+// CHOICES (4 alternativas com subgrid alignment)
+// ---------------------------------------------------------------------------
+
+function renderChoices(state) {
+  const { question, settings, answered, answering, selectedTaxonId, answerResult, hintLevel } = state;
+  const mode = answered ? 'answered' : hintLevel >= 2 ? 'hint2' : hintLevel >= 1 ? 'hint1' : 'plain';
+
+  const choicesHtml = question.choices.slice(0, 4).map((choice) => {
     const isSelected = selectedTaxonId === choice.taxonId;
-    const isCorrect = answerResult?.correctTaxonId === choice.taxonId;
-    const statusClass = answered
-      ? isCorrect ? 'correct' : isSelected ? 'wrong' : 'neutral'
-      : '';
-    const label = labelForChoice(choice, settings.scientificOnly, hintLevel, answered);
-    const thumbUrl = bestChoiceImage(choice);
+    const isCorrect = answered && choice.taxonId === answerResult?.correctTaxonId;
+    const isWrong = answered && isSelected && !isCorrect;
+    const isNeutral = answered && !isCorrect && !isWrong;
+    const cls = ['choice'];
+    if (isCorrect) cls.push('is-correct');
+    else if (isWrong) cls.push('is-wrong');
+    else if (isNeutral) cls.push('is-neutral');
 
-    const buttonClass = `answer-button ${statusClass} ${isSelected ? 'selected-choice' : ''} ${answering ? 'is-answering' : ''} ${answered && thumbUrl ? 'revealed-thumb' : ''} hint-level-${hintLevel}`;
+    const label = labelForChoice(choice, settings.scientificOnly);
+    const thumbUrl = bestChoiceImage(choice);
+    const showHints = !answered && hintLevel > 0;
 
     const thumb = (answered && thumbUrl)
-      ? `<span class="choice-media"><img class="choice-thumb" src="${escapeHtml(thumbUrl)}" alt="Imagem de referência: ${escapeHtml(label.title)}" loading="eager" decoding="async" /></span>`
-      : '';
+      ? `<span class="thumb"><img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy" /></span>` : '';
 
-    const subtitle = label.subtitle ? `<span class="answer-subtitle"><em>${escapeHtml(label.subtitle)}</em></span>` : '';
-    const metaLines = label.metaLines.map((line) => `<span class="answer-taxonomy">${escapeHtml(line)}</span>`).join('');
+    const hintLabels = showHints ? `
+      <span class="hint-labels" aria-hidden="true">
+        <span class="hint-tag">FAMÍLIA</span>
+        ${hintLevel >= 2 ? '<span class="hint-tag">ORDEM</span>' : ''}
+      </span>` : '';
+    const hintValues = showHints ? `
+      <span class="hint-values">
+        <span class="hint-val">${escapeHtml(choice.familyScientificName ?? '—')}</span>
+        ${hintLevel >= 2 ? `<span class="hint-val">${escapeHtml(choice.orderScientificName ?? '—')}</span>` : ''}
+      </span>` : '';
 
     let status = '';
-    if (answered && isCorrect) status = '<span class="answer-status">✓ correta</span>';
-    else if (answered && isSelected && !isCorrect) status = '<span class="answer-status">✕ escolhida</span>';
-    else if (answered && !isSelected && !isCorrect && answerResult?.correct === false) status = '<span class="answer-status muted-status">alternativa</span>';
+    if (isCorrect) status = '<span class="status status-ok" aria-label="Resposta correta">✓</span>';
+    else if (isWrong) status = '<span class="status status-err" aria-label="Sua escolha (errada)">✕</span>';
 
     return `
-      <button type="button" class="${buttonClass}" data-action="answer" data-taxon-id="${choice.taxonId}" ${answered || answering ? 'disabled' : ''} aria-pressed="${isSelected}" style="--choice-index:${index}">
+      <button type="button" class="${cls.join(' ')}" data-action="answer" data-taxon-id="${choice.taxonId}" ${answered || answering ? 'disabled' : ''} aria-pressed="${isSelected}">
         ${thumb}
-        <span class="answer-text">
-          <span class="answer-title">${escapeHtml(label.title)}</span>
-          ${subtitle}
-          ${metaLines}
-          ${status}
+        <span class="names">
+          <span class="name">${escapeHtml(label.title)}</span>
+          ${label.subtitle ? `<span class="sci">${escapeHtml(label.subtitle)}</span>` : ''}
         </span>
+        ${hintLabels}
+        ${hintValues}
+        ${status}
       </button>
     `;
   }).join('');
 
-  // Feedback panel ----------------------------------------------------------
-  const scoreLabel = (delta) => `${delta > 0 ? `+${delta}` : String(delta)} pts`;
-  const feedbackHtml = answered
-    ? `
-      <section class="feedback compact-feedback ${answerResult.correct ? 'positive' : 'negative'}" aria-live="polite">
-        <div class="feedback-head compact-feedback-head">
-          <h2>${answerResult.correct ? 'Correto' : 'Incorreto'}</h2>
-          <strong>${escapeHtml(scoreLabel(answerResult.scoreDelta))}</strong>
-        </div>
-        <div class="feedback-actions compact-feedback-actions persistent-actions">
-          <button type="button" class="secondary small-action" data-action="info">Info</button>
-          <button type="button" class="large-action" data-action="advance">Próxima</button>
-        </div>
-      </section>
-    ` : `
-      <section class="feedback compact-feedback pending-feedback" aria-live="polite">
-        <div class="feedback-head compact-feedback-head pending-feedback-head">
-          <h2>Escolha a espécie</h2>
-          <strong>+${currentBonusPoints} bônus</strong>
-        </div>
-        <div class="feedback-actions compact-feedback-actions persistent-actions">
-          <button type="button" class="secondary small-action" data-action="hint" ${hintLevel >= 2 ? 'disabled' : ''}>${hintLevel === 0 ? 'Dica' : hintLevel === 1 ? '2ª dica' : 'Dicas completas'}</button>
-          <button type="button" class="ghost large-action" data-action="advance">Pular</button>
-        </div>
-      </section>
-    `;
-
-  const warning = question.meta.warning ? `<p class="warning compact-warning">${escapeHtml(question.meta.warning)}</p>` : '';
-
   return `
-    <div class="quiz-stage mobile-stage ${answered ? 'is-answered' : ''}" data-question-id="${escapeHtml(question.questionId)}">
-      <div class="media-column">
-        <section class="quiz-card compact-quiz-card">
-          <div class="image-frame" data-image-frame>
-            <div class="image-viewport">
-              <img class="image-backdrop" data-image-backdrop src="${escapeHtml(photoSrc)}" alt="" aria-hidden="true" draggable="false" />
-              <img class="zoomable-image" data-zoomable src="${escapeHtml(photoSrc)}" alt="${answered ? `Foto de ${escapeHtml(question.answer.commonName ?? question.answer.scientificName)}` : 'Foto de uma espécie para adivinhar'}" draggable="false" />
-            </div>
-            <div class="image-credit" title="${escapeHtml(question.image.attribution ?? author)}">
-              <strong>Autor: ${escapeHtml(author)}</strong>
-              <span>${escapeHtml(question.image.licenseCode ?? 'licença n/d')}</span>
-            </div>
-          </div>
-          ${warning}
-        </section>
-      </div>
+    <div class="choices" data-mode="${mode}" data-hint="${hintLevel}" data-answered="${answered}" role="listbox" aria-label="Alternativas">
+      ${choicesHtml}
+    </div>
+  `;
+}
 
-      <div class="play-column">
-        <div class="answer-grid choices-4 hint-level-${hintLevel} ${answered ? 'answered-grid' : 'pending-grid'}" role="group" aria-label="Alternativas de resposta" data-answer-grid>
-          ${choicesHtml}
+// ---------------------------------------------------------------------------
+// FEEDBACK DOCK (pending / ok / err)
+// ---------------------------------------------------------------------------
+
+function renderFeedback(state) {
+  const { answered, answerResult, hintLevel, currentBonusPoints, stats, question } = state;
+
+  if (!answered) {
+    const hintLabel = hintLevel === 0 ? '💡 Dica (família)'
+      : hintLevel === 1 ? '💡 Mais dica (ordem)'
+      : '— Sem mais dicas';
+    const sub = hintLevel === 0
+      ? `Bônus atual <strong class="tnum">+${currentBonusPoints} pts</strong> · tecla <kbd>1-4</kbd>`
+      : `<span class="hint-used">${hintLevel} dica${hintLevel === 1 ? '' : 's'} usada${hintLevel === 1 ? '' : 's'}</span> · bônus <strong class="tnum">+${currentBonusPoints}</strong>`;
+    return `
+      <div class="feedback is-pending" data-kind="pending" role="status">
+        <span class="fb-disc" aria-hidden="true">?</span>
+        <div class="fb-text">
+          <strong class="fb-title"><span class="fb-label">Selecione uma alternativa</span></strong>
+          <span class="fb-sub">${sub}</span>
         </div>
-        ${feedbackHtml}
+        <button type="button" class="btn btn-secondary fb-secondary" data-action="hint" ${hintLevel >= 2 ? 'disabled' : ''}>
+          <span class="kbd-hint" aria-hidden="true">D</span>
+          <span>${escapeHtml(hintLabel)}</span>
+        </button>
+        <button type="button" class="btn btn-ghost fb-primary" data-action="advance">
+          <span>Pular</span>
+          <span class="kbd-hint" aria-hidden="true">S</span>
+        </button>
+      </div>
+    `;
+  }
+
+  const ok = answerResult.correct;
+  const delta = answerResult.scoreDelta;
+  const sub = ok
+    ? `Streak <strong class="tnum">${stats.currentStreak}</strong> · acertou em sequência`
+    : `A correta era <em>${escapeHtml(displayName(question))}</em>`;
+  const deltaText = `${delta > 0 ? '+' : ''}${delta} pts`;
+  return `
+    <div class="feedback ${ok ? 'is-ok' : 'is-err'}" data-kind="${ok ? 'ok' : 'err'}" role="status" aria-live="polite">
+      <span class="fb-disc" aria-hidden="true">${ok ? '✓' : '✕'}</span>
+      <div class="fb-text">
+        <strong class="fb-title">
+          <span class="fb-label">${ok ? 'Correto' : 'Incorreto'}</span>
+          <span class="fb-delta tnum">${escapeHtml(deltaText)}</span>
+        </strong>
+        <span class="fb-sub">${sub}</span>
+      </div>
+      <button type="button" class="btn btn-secondary fb-secondary" data-action="info">
+        <span class="kbd-hint" aria-hidden="true">I</span>
+        <span>Detalhes</span>
+      </button>
+      <button type="button" class="btn btn-primary fb-primary" data-action="advance">
+        <span>Próxima</span>
+        <span class="kbd-hint" aria-hidden="true">↵</span>
+      </button>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// QUIZ STAGE — pergunta completa (hero + play)
+// ---------------------------------------------------------------------------
+
+function renderQuizStage(state) {
+  return `
+    <div class="quiz-screen" data-question-id="${escapeHtml(state.question.questionId)}">
+      ${renderHero(state.question, state.answered)}
+      <div class="play">
+        ${renderFeedback(state)}
+        ${renderChoices(state)}
       </div>
     </div>
   `;
 }
 
-/**
- * Renderiza a tela inteira do jogo (HUD + content area). Recebe `state`
- * com tudo necessário do hook do quiz (question, stats, etc.).
- */
+// ---------------------------------------------------------------------------
+// GAME SCREEN — wrapper completo (HUD + content)
+// ---------------------------------------------------------------------------
+
 export function renderGameScreen(state) {
-  const { question, loading, error, prefetchedCount, stats } = state;
+  const { question, loading, error, prefetchedCount } = state;
 
   let content = '';
-  if (!question && !loading && !error) content = startScreen();
-  else if (loading) content = loadingScreen(prefetchedCount > 0);
-  else if (error && !loading) content = errorScreen(error);
-  else if (question && !loading) content = renderQuizStage(state);
+  if (loading) content = loadingCard(prefetchedCount > 0);
+  else if (error) content = errorCard(error);
+  else if (!question) content = startCard();
+  else content = renderQuizStage(state);
+
+  // Hero/play só aparecem em quiz-pending/hint/answered. Nos demais, HUD
+  // ainda fica visível, mas com tudo zerado se for start.
+  const showHud = Boolean(question);
 
   return `
-    <section class="game-screen" aria-label="Tela do quiz">
-      <header class="game-topbar" aria-label="Resumo do jogo">
-        <div class="hud-strip" aria-label="Pontuação da rodada">
-          <span class="hud-pill accent"><strong><span class="hud-icon" aria-hidden="true">⭐</span><span>${stats.score}</span></strong><small>Pontos</small></span>
-          <span class="hud-pill"><strong><span class="hud-icon" aria-hidden="true">🔥</span><span>${stats.currentStreak}</span></strong><small>Seq.</small></span>
-          <span class="hud-pill timer-pill"><strong><span class="hud-icon" aria-hidden="true">💎</span><span>+${state.currentBonusPoints}</span></strong><small>Bônus</small></span>
-          <span class="hud-pill"><strong><span class="hud-icon" aria-hidden="true">🎯</span><span>${stats.accuracy}%</span></strong><small>Prec.</small></span>
-        </div>
-      </header>
+    <section class="app-main" aria-label="Quiz">
+      ${showHud ? renderHud(state) : ''}
       ${content}
     </section>
   `;
 }
 
 // ---------------------------------------------------------------------------
-// INFO MODAL — exibido quando clica em "Info" após responder
+// INFO MODAL — detalhes da observação (pós-resposta)
 // ---------------------------------------------------------------------------
 
 export function renderInfoModal(question) {
@@ -271,52 +354,57 @@ export function renderInfoModal(question) {
 
   const observer = question.observation.observerName
     || question.observation.observerLogin
-    || question.image.attribution
-    || 'não informado';
+    || cleanAttribution(question.image.attribution);
+  const photoSrc = question.image.mediumUrl || question.image.largeUrl || question.image.smallUrl || question.image.url;
 
   return `
     <div class="modal-backdrop" role="presentation" data-action="close-modal">
-      <section class="info-modal" role="dialog" aria-modal="true" aria-label="Informações da observação" data-modal>
-        <div class="modal-head">
-          <h2>Informações</h2>
-          <button type="button" class="ghost" data-action="close-modal">Fechar</button>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="info-title" data-stop>
+        <div class="modal-thumb">
+          <img src="${escapeHtml(photoSrc)}" alt="Foto de ${escapeHtml(displayName(question))}" />
+          <div class="modal-thumb-credit">
+            <span>${escapeHtml(observer)}</span>
+            <span class="lic">${escapeHtml(question.image.licenseCode ?? 'licença n/d')}</span>
+          </div>
         </div>
-        <dl class="info-list">
-          <div><dt>Nome exibido</dt><dd>${escapeHtml(displayName(question))}</dd></div>
-          <div><dt>Nome popular</dt><dd>${escapeHtml(question.answer.commonName ?? 'não informado')}</dd></div>
-          <div><dt>Nome científico</dt><dd><em>${escapeHtml(question.answer.scientificName)}</em></dd></div>
-          <div><dt>Família</dt><dd><em>${escapeHtml(question.answer.familyScientificName ?? 'n/d')}</em></dd></div>
-          <div><dt>Ordem</dt><dd><em>${escapeHtml(question.answer.orderScientificName ?? 'n/d')}</em></dd></div>
-          <div><dt>Grupo</dt><dd>${escapeHtml(question.answer.iconicTaxonName ?? 'n/d')}</dd></div>
-          <div><dt>Autor</dt><dd>${escapeHtml(observer)}</dd></div>
-          <div><dt>Licença</dt><dd>${escapeHtml(question.image.licenseCode ?? 'n/d')}</dd></div>
-          <div><dt>Data</dt><dd>${escapeHtml(question.observation.observedOn ? formatDate(question.observation.observedOn) : 'n/d')}</dd></div>
-          <div><dt>Local</dt><dd>${escapeHtml(question.observation.placeGuess ?? 'n/d')}</dd></div>
-        </dl>
-        ${fallbackNote ? `<p class="fine-print">${escapeHtml(fallbackNote)}</p>` : ''}
-        ${question.observation.uri ? `<a class="link-button" href="${escapeHtml(question.observation.uri)}" target="_blank" rel="noreferrer">Abrir no iNaturalist</a>` : ''}
+        <header class="modal-head">
+          <div>
+            <h2 id="info-title">${escapeHtml(displayName(question))}<em>${escapeHtml(question.answer.scientificName)}</em></h2>
+          </div>
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Fechar ✕</button>
+        </header>
+        <div class="modal-body">
+          <dl>
+            <div><dt>Família</dt><dd><em>${escapeHtml(question.answer.familyScientificName ?? 'n/d')}</em></dd></div>
+            <div><dt>Ordem</dt><dd><em>${escapeHtml(question.answer.orderScientificName ?? 'n/d')}</em></dd></div>
+            <div><dt>Local</dt><dd>${escapeHtml(question.observation.placeGuess ?? 'n/d')}</dd></div>
+            <div><dt>Data</dt><dd>${escapeHtml(question.observation.observedOn ? formatDate(question.observation.observedOn) : 'n/d')}</dd></div>
+            <div><dt>Foto por</dt><dd>${escapeHtml(observer)}</dd></div>
+            <div><dt>Licença</dt><dd>${escapeHtml(question.image.licenseCode ?? 'n/d')}</dd></div>
+            <div><dt>Grupo</dt><dd>${escapeHtml(question.answer.iconicTaxonName ?? 'n/d')}</dd></div>
+          </dl>
+          ${fallbackNote ? `<p style="font-size: 12px; color: var(--text-faint); margin-top: 12px;">${escapeHtml(fallbackNote)}</p>` : ''}
+        </div>
+        <footer class="modal-foot">
+          ${question.observation.uri ? `<a class="btn btn-secondary" href="${escapeHtml(question.observation.uri)}" target="_blank" rel="noreferrer">Abrir no iNaturalist ↗</a>` : ''}
+          <button type="button" class="btn btn-primary" data-action="close-modal">OK</button>
+        </footer>
       </section>
     </div>
   `;
 }
 
 // ---------------------------------------------------------------------------
-// IMAGE PROGRESSIVE LOAD + ZOOM/PAN — anexa interatividade após render
+// IMAGE INTERACTIVITY — pipeline progressivo + zoom/pan/pinch
 // ---------------------------------------------------------------------------
+// Espelha hooks/useImageZoom.ts do app React. Wheel 14% por tick (1x..4x),
+// pinch+pan simultâneo, drag ±240px, dblclick reset, snap-back ≤1.01.
 
-/**
- * Aplica:
- *   • Carregamento progressivo (small → medium → large).
- *   • Zoom com wheel.
- *   • Pan com drag (1 ponteiro) e pinch (2 ponteiros).
- *   • Reset com double-click.
- * Devolve uma função de cleanup (chamar no unmount/replace).
- */
 export function attachImageInteractivity(stageRoot, question, onImageError) {
-  const frame = stageRoot.querySelector('[data-image-frame]');
+  const hero = stageRoot.querySelector('[data-image-frame]');
   const img = stageRoot.querySelector('[data-zoomable]');
   const backdrop = stageRoot.querySelector('[data-image-backdrop]');
-  if (!frame || !img) return () => undefined;
+  if (!hero || !img) return () => undefined;
 
   let zoom = 1;
   let pan = { x: 0, y: 0 };
@@ -327,10 +415,8 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
 
   function applyTransform() {
     img.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
-    if (zoom > 1) frame.classList.add('is-zoomed');
-    else frame.classList.remove('is-zoomed');
+    hero.dataset.zoomed = zoom > 1.02 ? 'true' : 'false';
   }
-
   function resetView() {
     zoom = 1;
     pan = { x: 0, y: 0 };
@@ -340,10 +426,9 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
     applyTransform();
   }
 
-  // Carregamento progressivo (small → medium → large)
+  // Carregamento progressivo small → medium → large
   const pipeline = [question.image.smallUrl, question.image.mediumUrl, question.image.largeUrl]
     .filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
-
   function loadNext(index) {
     const url = pipeline[index];
     if (!url || cancelled) return;
@@ -352,7 +437,7 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
     probe.onload = () => {
       if (cancelled) return;
       img.src = url;
-      backdrop.src = url;
+      if (backdrop) backdrop.src = url;
       loadNext(index + 1);
     };
     probe.onerror = () => loadNext(index + 1);
@@ -360,9 +445,9 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
   }
   loadNext(1);
 
-  function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
-  function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-  function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+  const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
   function onWheel(event) {
     event.preventDefault();
@@ -373,14 +458,12 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
   }
   function onDoubleClick() { resetView(); }
   function onPointerDown(event) {
-    frame.setPointerCapture(event.pointerId);
+    if (event.button !== 0 && event.pointerType === 'mouse') return;
+    hero.setPointerCapture(event.pointerId);
     const point = { x: event.clientX, y: event.clientY };
     pointers.set(event.pointerId, point);
     if (pointers.size === 1) lastDragPoint = point;
     if (pointers.size === 2) {
-      // Quando o 2º dedo encosta, capturamos o estado inicial completo
-      // do gesto: distância (para zoom), midpoint (para pan simultâneo),
-      // e o pan/zoom atuais (para os deltas serem relativos a este momento).
       const pts = [...pointers.values()];
       pinchStart = {
         distance: distance(pts[0], pts[1]),
@@ -396,12 +479,6 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
     const next = { x: event.clientX, y: event.clientY };
     pointers.set(event.pointerId, next);
     if (pointers.size === 2 && pinchStart) {
-      // Pinch + pan SIMULTÂNEOS:
-      //   • zoom = ratio das distâncias entre os 2 dedos.
-      //   • pan = deslocamento do PONTO MÉDIO entre os 2 dedos (relativo ao
-      //     midpoint inicial), somado ao pan que já tínhamos antes do gesto.
-      // Isso permite "pegar e arrastar" a foto enquanto dá zoom — os 2
-      // dedos se afastam/aproximam para zoom E também deslizam pra pan.
       const pts = [...pointers.values()];
       const newDist = distance(pts[0], pts[1]);
       const newMid = midpoint(pts[0], pts[1]);
@@ -426,9 +503,6 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
   function onPointerUp(event) {
     pointers.delete(event.pointerId);
     pinchStart = null;
-    // Se sobrou 1 dedo após sair do pinch, o drag continua a partir da
-    // posição atual desse dedo — sem "saltar" porque não usamos o ponto
-    // anterior, e sim o ponto vivo agora.
     lastDragPoint = pointers.size === 1 ? [...pointers.values()][0] : null;
     if (zoom <= 1.01) resetView();
   }
@@ -436,55 +510,30 @@ export function attachImageInteractivity(stageRoot, question, onImageError) {
     if (typeof onImageError === 'function') onImageError();
   }
 
-  frame.addEventListener('wheel', onWheel, { passive: false });
-  frame.addEventListener('dblclick', onDoubleClick);
-  frame.addEventListener('pointerdown', onPointerDown);
-  frame.addEventListener('pointermove', onPointerMove);
-  frame.addEventListener('pointerup', onPointerUp);
-  frame.addEventListener('pointercancel', onPointerUp);
+  hero.addEventListener('wheel', onWheel, { passive: false });
+  hero.addEventListener('dblclick', onDoubleClick);
+  hero.addEventListener('pointerdown', onPointerDown);
+  hero.addEventListener('pointermove', onPointerMove);
+  hero.addEventListener('pointerup', onPointerUp);
+  hero.addEventListener('pointercancel', onPointerUp);
   img.addEventListener('error', onError);
 
   return () => {
     cancelled = true;
-    frame.removeEventListener('wheel', onWheel);
-    frame.removeEventListener('dblclick', onDoubleClick);
-    frame.removeEventListener('pointerdown', onPointerDown);
-    frame.removeEventListener('pointermove', onPointerMove);
-    frame.removeEventListener('pointerup', onPointerUp);
-    frame.removeEventListener('pointercancel', onPointerUp);
+    hero.removeEventListener('wheel', onWheel);
+    hero.removeEventListener('dblclick', onDoubleClick);
+    hero.removeEventListener('pointerdown', onPointerDown);
+    hero.removeEventListener('pointermove', onPointerMove);
+    hero.removeEventListener('pointerup', onPointerUp);
+    hero.removeEventListener('pointercancel', onPointerUp);
     img.removeEventListener('error', onError);
   };
 }
 
-// ---------------------------------------------------------------------------
-// ANSWER GRID HEIGHT EQUALIZER
-// ---------------------------------------------------------------------------
-// Replica o useLayoutEffect do AnswerGrid.tsx: mede o botão mais alto e
-// seta `--answer-btn-h` no grid, fazendo todos terem a mesma altura.
-
-export function equalizeAnswerHeights(stageRoot) {
-  const grid = stageRoot.querySelector('[data-answer-grid]');
-  if (!grid) return () => undefined;
-
-  function measure() {
-    const buttons = Array.from(grid.querySelectorAll('button.answer-button'));
-    if (buttons.length === 0) return;
-    const previousVar = grid.style.getPropertyValue('--answer-btn-h');
-    grid.style.setProperty('--answer-btn-h', 'auto', 'important');
-    void buttons[0].offsetHeight; // força reflow
-    let max = 0;
-    for (const b of buttons) {
-      const h = b.getBoundingClientRect().height;
-      if (h > max) max = h;
-    }
-    if (previousVar) grid.style.setProperty('--answer-btn-h', previousVar);
-    else grid.style.removeProperty('--answer-btn-h');
-    grid.style.setProperty('--answer-btn-h', `${Math.ceil(max)}px`);
-  }
-
-  // Mede após o frame atual e depois que as imagens carregaram.
-  requestAnimationFrame(measure);
-  window.addEventListener('resize', measure);
-
-  return () => window.removeEventListener('resize', measure);
+// equalizeAnswerHeights ficou obsoleto — o grid v2 usa
+// grid-template-rows: repeat(4, minmax(0, 1fr)) que iguala altura
+// nativamente. Mantemos a função como no-op para não quebrar
+// chamadas existentes no main.js.
+export function equalizeAnswerHeights() {
+  return () => undefined;
 }

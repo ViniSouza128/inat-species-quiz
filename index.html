@@ -13,15 +13,27 @@
 
   Toda a lógica do quiz, pontuação, histórico e prefetch acontece no
   cliente — nada é enviado para servidores próprios.
+
+  Visual: design system v2 (Field Notebook) — espelha o mockup em
+  mockup/index-v2.html e o app React em client/.
   ============================================================================
 -->
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Quiz de adivinhar espécies com fotos do iNaturalist. Versão 100% cliente." />
-    <meta name="theme-color" content="#0c1814" />
+    <meta name="theme-color" content="#0a120e" />
     <title>iNat Species Quiz</title>
+
+    <!-- Fontes: Inter (UI), Fraunces (títulos/serif), JetBrains Mono (números). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,700;0,9..144,900;1,9..144,500;1,9..144,700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>

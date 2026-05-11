@@ -36,7 +36,9 @@ export const DEFAULT_SETTINGS = {
   difficulty: 'normal',
   choices: 4,
   scientificOnly: false,
-  theme: 'dark'
+  showPopularName: true,    // toggle em Dificuldade — exibe nome popular quando disponível
+  soundVolume: 60,          // 0..100, controla o gain dos sons UI; 0 = mudo
+  theme: 'dark'             // 'dark' | 'light' | 'auto'
 };
 
 export const DEFAULT_STATS = {

@@ -1,13 +1,21 @@
 // =============================================================================
-// SETTINGS VIEW — tela de Configurações (filtros + dificuldade + busca)
+// SETTINGS VIEW — tela de Configurações (5 collapsible boxes)
 // =============================================================================
-// Espelha SettingsPanel.tsx. UI controlada via re-render — cada interação
-// chama `update(partial)` e o pai redesenha.
+// Espelha o ScreenConfig() do mockup e o SettingsPanel.tsx do app React:
+//   • Grupos biológicos (chips toggleáveis)
+//   • Dificuldade (segmented + descrição + 2 toggles)
+//   • Filtros (Locais + Táxons em sub-grupos, busca + tag selecionada)
+//   • Aparência (segmented Escuro/Claro/Auto)
+//   • Som (slider de volume com gradient sincronizado)
 // =============================================================================
 
 import { escapeHtml } from '../format.js';
 import { ALL_GROUP_VALUES } from '../state.js';
 import { searchTaxa, searchPlaces } from '../inat-api.js';
+
+// ---------------------------------------------------------------------------
+// CATÁLOGOS LOCAIS
+// ---------------------------------------------------------------------------
 
 const groupItems = [
   { value: 'all', label: 'Todos', icon: '🌐' },
@@ -23,43 +31,30 @@ const groupItems = [
 ];
 
 const difficultyInfo = {
-  easy: {
-    title: 'Fácil',
-    bullets: [
-      'Base de 60 pts + bônus regressivo por até 20 s.',
-      'O bônus começa em 60 pts e cai com o tempo.',
-      'Se o tempo acabar, você ainda pode responder, só sem bônus.',
-      'Alternativas podem ser de ordens diferentes. Erro: -20 pts.'
-    ]
-  },
-  normal: {
-    title: 'Normal',
-    bullets: [
-      'Base de 100 pts + bônus regressivo por até 15 s.',
-      'O bônus começa em 75 pts e diminui a cada segundo.',
-      'Depois disso, ainda dá para responder sem bônus.',
-      'Alternativas ficam na mesma ordem taxonômica da resposta correta. Erro: -45 pts.'
-    ]
-  },
-  hard: {
-    title: 'Difícil',
-    bullets: [
-      'Base de 140 pts + bônus regressivo por até 12 s.',
-      'Alternativas da mesma ordem taxonômica da resposta correta.',
-      'Quando o contador zera, a tentativa é perdida automaticamente.',
-      'Erro ou tempo esgotado: -65 pts.'
-    ]
-  },
-  expert: {
-    title: 'Especialista',
-    bullets: [
-      'Base de 180 pts + bônus regressivo por até 10 s.',
-      'Distratores muito parecidos, todos da mesma ordem, e dica mínima.',
-      'Quando o contador zera, a tentativa é perdida automaticamente.',
-      'Erro ou tempo esgotado: -90 pts.'
-    ]
-  }
+  easy:   { title: 'Fácil',        summary: 'Fácil · 20s',  bullets: [
+    'Base de <em>60 pts</em> + bônus regressivo por até <em>20 s</em>.',
+    'Alternativas podem ser de ordens diferentes.',
+    'Erro: <em>−20 pts</em>. Score nunca fica negativo.'
+  ]},
+  normal: { title: 'Normal',       summary: 'Normal · 15s', bullets: [
+    'Base de <em>100 pts</em> com bônus regressivo até <em>15 s</em>.',
+    'Distratores priorizam mesma <em>ordem taxonômica</em>.',
+    'Erro: <em>−45 pts</em>. Score nunca fica negativo.'
+  ]},
+  hard:   { title: 'Difícil',      summary: 'Difícil · 12s', bullets: [
+    'Base de <em>140 pts</em> + bônus até <em>12 s</em>.',
+    'Alternativas da mesma ordem taxonômica.',
+    'Timer zerado = resposta errada automática. Erro: <em>−65 pts</em>.'
+  ]},
+  expert: { title: 'Especialista', summary: 'Especialista · 10s', bullets: [
+    'Base de <em>180 pts</em> + bônus até <em>10 s</em>.',
+    'Distratores muito parecidos; dica mínima.',
+    'Timer zerado = resposta errada automática. Erro: <em>−90 pts</em>.'
+  ]}
 };
+
+const quickPlaces = ['Brasil', 'Pantanal', 'Amazônia', 'Cerrado', 'Mata Atlântica'];
+const quickTaxa = ['Felidae', 'Orchidaceae', 'Coleoptera', 'Anura'];
 
 function normalizeGroups(values) {
   const onlyActual = ALL_GROUP_VALUES.filter((v) => values.includes(v));
@@ -67,143 +62,273 @@ function normalizeGroups(values) {
   return onlyActual;
 }
 
-// Estado local (resultado da busca, queries) — escopo do módulo, não persistido.
+// ---------------------------------------------------------------------------
+// ESTADO LOCAL DA VIEW (módulo, não persistido)
+// ---------------------------------------------------------------------------
+
 const local = {
   taxonQuery: '',
   placeQuery: '',
   taxaResults: [],
   placeResults: [],
-  searchError: null
+  searchError: null,
+  // Estado dos boxes colapsáveis. Grupos abre por default.
+  cbox: { groups: true, difficulty: false, filters: false, appearance: false, sound: false }
 };
 
 export function getSettingsLocal() { return local; }
+export function toggleCbox(id) {
+  if (id in local.cbox) local.cbox[id] = !local.cbox[id];
+}
+
+// ---------------------------------------------------------------------------
+// RENDER
+// ---------------------------------------------------------------------------
 
 export function renderSettingsView(settings, loading) {
   const selectedGroups = normalizeGroups(settings.iconicTaxa.length > 0 ? settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
-  const currentDifficulty = difficultyInfo[settings.difficulty];
 
-  const chipsHtml = groupItems.map((g) => {
+  return `
+    <section class="config-screen" aria-label="Configurações do quiz" data-scroll>
+      <header class="page-head">
+        <span class="kicker">Quiz · iNaturalist</span>
+        <h1>Configuração</h1>
+      </header>
+
+      <div class="config-stack">
+        ${renderGroupsBox(selectedGroups)}
+        ${renderDifficultyBox(settings)}
+        ${renderFiltersBox(settings)}
+        ${renderAppearanceBox(settings)}
+        ${renderSoundBox(settings)}
+
+        ${local.searchError ? `<p class="warning" style="color: var(--err); font-size: 13px;">${escapeHtml(local.searchError)}</p>` : ''}
+
+        <div style="display: flex; gap: 8px; padding: var(--sp-3) 0 var(--sp-5);">
+          <button type="button" class="btn btn-primary" data-action="new-question" ${loading ? 'disabled' : ''} style="flex: 1;">
+            ${loading ? 'Buscando…' : 'Nova pergunta →'}
+          </button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// BOX HELPERS
+// ---------------------------------------------------------------------------
+
+function cboxHeader(id, glyph, title, desc, summary) {
+  return `
+    <button type="button" class="cbox-head" data-action="toggle-cbox" data-cbox="${id}">
+      <span class="glyph" aria-hidden="true">${glyph}</span>
+      <span class="info">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(desc)}</span>
+      </span>
+      <span class="summary">${escapeHtml(summary)}</span>
+      <span class="caret" aria-hidden="true"></span>
+    </button>
+  `;
+}
+
+// 1) GRUPOS BIOLÓGICOS -------------------------------------------------------
+
+function renderGroupsBox(selectedGroups) {
+  const chips = groupItems.map((g) => {
     const isActive = g.value === 'all' ? selectedGroups.includes('all') : selectedGroups.includes(g.value);
     return `
-      <button type="button" class="group-chip ${isActive ? 'active' : ''}" data-action="toggle-group" data-group="${g.value}">
-        <span class="group-icon" aria-hidden="true">${g.icon}</span>
+      <button type="button" class="chip ${isActive ? 'is-active' : ''}" data-action="toggle-group" data-group="${g.value}">
+        <span class="glyph">${g.icon}</span>
         <span>${escapeHtml(g.label)}</span>
       </button>
     `;
   }).join('');
 
-  const taxaResultsHtml = local.taxaResults.length > 0 ? `
-    <div class="result-list">
-      ${local.taxaResults.map((t) => `
-        <button type="button" data-action="pick-taxon" data-taxon-id="${t.id}" data-taxon-label="${escapeHtml(t.preferred_common_name ?? t.name)}">
-          <strong>${escapeHtml(t.preferred_common_name ?? t.name)}</strong>
-          <span>${escapeHtml(t.name)} · ${escapeHtml(t.rank ?? 'rank n/d')}</span>
-        </button>
-      `).join('')}
-    </div>
-  ` : '';
-
-  const placeResultsHtml = local.placeResults.length > 0 ? `
-    <div class="result-list">
-      ${local.placeResults.map((p) => `
-        <button type="button" data-action="pick-place" data-place-id="${p.id}" data-place-label="${escapeHtml(p.display_name)}">
-          <strong>${escapeHtml(p.name)}</strong>
-          <span>${escapeHtml(p.display_name)}</span>
-        </button>
-      `).join('')}
-    </div>
-  ` : '';
+  const activeCount = selectedGroups.filter((v) => v !== 'all').length;
+  const summary = `${activeCount} ativos`;
 
   return `
-    <section class="screen-scroll config-screen drag-scroll-surface" aria-label="Configurações do quiz" data-scroll>
-      <div class="simple-page-head">
-        <div>
-          <p class="eyebrow">Quiz iNaturalist</p>
-          <h1>Configurações</h1>
-        </div>
+    <article class="cbox" data-open="${local.cbox.groups}">
+      ${cboxHeader('groups', '🌿', 'Grupos biológicos', 'Quais reinos/classes podem aparecer no quiz', summary)}
+      <div class="cbox-body">
+        <div class="group-chips">${chips}</div>
       </div>
-
-      <aside class="settings-panel compact-settings">
-        <div class="settings-title stacked-title">
-          <div>
-            <p class="eyebrow">Configuração do quiz</p>
-            <h2>Filtro e dificuldade</h2>
-          </div>
-          <span>${escapeHtml(settings.placeLabel ?? settings.taxonLabel ?? 'global')}</span>
-        </div>
-
-        <section class="group-picker" aria-label="Grupos">
-          <h3>Grupos</h3>
-          <div class="group-chip-grid">${chipsHtml}</div>
-        </section>
-
-        <label>
-          Dificuldade
-          <select data-action="set-difficulty">
-            <option value="easy" ${settings.difficulty === 'easy' ? 'selected' : ''}>Fácil</option>
-            <option value="normal" ${settings.difficulty === 'normal' ? 'selected' : ''}>Normal</option>
-            <option value="hard" ${settings.difficulty === 'hard' ? 'selected' : ''}>Difícil</option>
-            <option value="expert" ${settings.difficulty === 'expert' ? 'selected' : ''}>Especialista</option>
-          </select>
-        </label>
-
-        <div class="difficulty-card">
-          <strong>${escapeHtml(currentDifficulty.title)}</strong>
-          <ul>
-            ${currentDifficulty.bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}
-          </ul>
-        </div>
-
-        <details class="advanced-options">
-          <summary>Filtros avançados</summary>
-
-          <div class="search-box">
-            <label for="taxon-search">Táxon</label>
-            <div class="inline-field">
-              <input id="taxon-search" data-input="taxon" placeholder="Felidae, Orchidaceae" value="${escapeHtml(local.taxonQuery)}" />
-              <button type="button" class="secondary" data-action="search-taxon">Buscar</button>
-            </div>
-            ${settings.taxonLabel ? `<button type="button" class="chip" data-action="clear-taxon">Táxon: ${escapeHtml(settings.taxonLabel)} ×</button>` : ''}
-            ${taxaResultsHtml}
-          </div>
-
-          <div class="search-box">
-            <label for="place-search">Local</label>
-            <div class="inline-field">
-              <input id="place-search" data-input="place" placeholder="Brazil, Pantanal" value="${escapeHtml(local.placeQuery)}" />
-              <button type="button" class="secondary" data-action="search-place">Buscar</button>
-            </div>
-            <button type="button" class="secondary full" data-action="search-place-brazil">Brasil</button>
-            ${settings.placeLabel ? `<button type="button" class="chip" data-action="clear-place">Lugar: ${escapeHtml(settings.placeLabel)} ×</button>` : ''}
-            ${placeResultsHtml}
-          </div>
-
-          <label class="toggle">
-            <input type="checkbox" data-action="toggle-scientific-only" ${settings.scientificOnly ? 'checked' : ''} />
-            Só nomes científicos
-          </label>
-
-          <label>
-            Tema
-            <select data-action="set-theme">
-              <option value="dark" ${settings.theme === 'dark' ? 'selected' : ''}>Escuro</option>
-              <option value="light" ${settings.theme === 'light' ? 'selected' : ''}>Claro</option>
-            </select>
-          </label>
-        </details>
-
-        ${local.searchError ? `<p class="warning">${escapeHtml(local.searchError)}</p>` : ''}
-
-        <div class="config-actions">
-          <button type="button" class="ghost" data-action="reset-stats">Resetar pontuação</button>
-          <button type="button" class="primary" data-action="new-question" ${loading ? 'disabled' : ''}>${loading ? 'Buscando...' : 'Nova pergunta'}</button>
-        </div>
-      </aside>
-    </section>
+    </article>
   `;
 }
 
-/** Helpers das buscas, expostos para o main.js. */
+// 2) DIFICULDADE -------------------------------------------------------------
+
+function renderDifficultyBox(settings) {
+  const current = difficultyInfo[settings.difficulty];
+  const segmented = ['easy', 'normal', 'hard', 'expert'].map((d) => {
+    const label = difficultyInfo[d].title;
+    const active = settings.difficulty === d ? 'is-active' : '';
+    return `<button type="button" class="${active}" data-action="set-difficulty" data-difficulty="${d}">${label}</button>`;
+  }).join('');
+
+  return `
+    <article class="cbox" data-open="${local.cbox.difficulty}">
+      ${cboxHeader('difficulty', '🎯', 'Dificuldade', 'Tempo, pontuação e tipo de distratores', current.summary)}
+      <div class="cbox-body">
+        <div class="segmented" role="radiogroup">${segmented}</div>
+        <div class="difficulty-detail">
+          <strong>${escapeHtml(current.title)}</strong>
+          <ul>${current.bullets.map((b) => `<li>${b}</li>`).join('')}</ul>
+        </div>
+
+        <div class="toggle ${settings.showPopularName !== false ? 'is-on' : ''}" data-action="toggle-popular">
+          <div class="text">
+            <strong>Mostrar nome popular</strong>
+            <small>Exibe o nome em PT-BR quando disponível. Recomendado para Fácil/Normal.</small>
+          </div>
+          <span class="switch"></span>
+        </div>
+        <div class="toggle ${settings.scientificOnly ? 'is-on' : ''}" data-action="toggle-scientific-only">
+          <div class="text">
+            <strong>Só nomes científicos</strong>
+            <small>Modo especialista — esconde nomes populares. Combina com Difícil/Especialista.</small>
+          </div>
+          <span class="switch"></span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+// 3) FILTROS (Locais + Táxons) -----------------------------------------------
+
+function filterSubGroup(opts) {
+  const { glyph, title, count, searchPlaceholder, searchInput, searchAction, currentTag, removeAction, quickList, quickAction, results, pickAction } = opts;
+
+  const tagStrip = currentTag
+    ? `<span class="tag" data-action="${removeAction}">
+         <span>${escapeHtml(currentTag.label)}</span>
+         ${currentTag.meta ? `<span class="meta">${escapeHtml(currentTag.meta)}</span>` : ''}
+         <button type="button" aria-label="Remover ${escapeHtml(currentTag.label)}">✕</button>
+       </span>`
+    : '';
+
+  const quickAdd = quickList.map((q) => {
+    const isActive = currentTag && currentTag.label === q;
+    return `<button type="button" data-added="${isActive}" data-action="${quickAction}" data-quick="${escapeHtml(q)}">${escapeHtml(q)}</button>`;
+  }).join('');
+
+  const resultsHtml = results && results.length > 0
+    ? `<div class="result-list-inline">
+         ${results.map((r) => `
+           <button type="button" data-action="${pickAction}" data-id="${r.id}" data-label="${escapeHtml(r.label)}" ${r.extra ? `data-extra="${escapeHtml(r.extra)}"` : ''}>
+             <strong>${escapeHtml(r.label)}${r.extra ? ` <em style="font-style: normal; color: var(--text-faint); font-weight: 500;">· ${escapeHtml(r.extra)}</em>` : ''}</strong>
+             <span class="add-glyph" aria-hidden="true">+</span>
+           </button>
+         `).join('')}
+       </div>`
+    : '';
+
+  return `
+    <div class="filter-group">
+      <header class="filter-group-head">
+        <span class="glyph" aria-hidden="true">${glyph}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <span class="count">${count}</span>
+      </header>
+      <div class="multi-select">
+        <div class="search-row">
+          <input class="input" data-input="${searchInput}" placeholder="${escapeHtml(searchPlaceholder)}" value="${escapeHtml(opts.queryValue || '')}" />
+          <button type="button" class="btn btn-secondary" data-action="${searchAction}">Buscar</button>
+        </div>
+        <div class="tag-strip" aria-label="${escapeHtml(title)} selecionados">${tagStrip}</div>
+        <div class="quick-add" aria-label="Atalhos rápidos">${quickAdd}</div>
+        ${resultsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderFiltersBox(settings) {
+  const placeTag = settings.placeId ? { label: settings.placeLabel ?? `Local ${settings.placeId}`, meta: 'local' } : null;
+  const taxonTag = settings.taxonId ? { label: settings.taxonLabel ?? `Táxon ${settings.taxonId}`, meta: 'táxon' } : null;
+  const count = (placeTag ? 1 : 0) + (taxonTag ? 1 : 0);
+  const summary = count === 0 ? 'nenhum' : `${count} ${count === 1 ? 'filtro' : 'filtros'}`;
+
+  const placesResults = local.placeResults.map((p) => ({
+    id: p.id, label: p.name || p.display_name, extra: p.display_name && p.display_name !== p.name ? p.display_name : null
+  }));
+  const taxaResults = local.taxaResults.map((t) => ({
+    id: t.id, label: t.preferred_common_name ?? t.name, extra: t.preferred_common_name ? `${t.name} · ${t.rank ?? 'rank n/d'}` : (t.rank ?? null)
+  }));
+
+  return `
+    <article class="cbox" data-open="${local.cbox.filters}">
+      ${cboxHeader('filters', '🔍', 'Filtros', 'Restringir a locais ou táxons específicos', summary)}
+      <div class="cbox-body">
+        ${filterSubGroup({
+          glyph: '📍', title: 'Locais', count: placeTag ? 1 : 0,
+          searchPlaceholder: 'Buscar local — ex: Brasil, Pantanal',
+          searchInput: 'place', searchAction: 'search-place',
+          currentTag: placeTag, removeAction: 'clear-place',
+          quickList: quickPlaces, quickAction: 'quick-place',
+          results: placesResults, pickAction: 'pick-place',
+          queryValue: local.placeQuery
+        })}
+        ${filterSubGroup({
+          glyph: '🔬', title: 'Táxons', count: taxonTag ? 1 : 0,
+          searchPlaceholder: 'Buscar táxon — ex: Felidae, Orchidaceae',
+          searchInput: 'taxon', searchAction: 'search-taxon',
+          currentTag: taxonTag, removeAction: 'clear-taxon',
+          quickList: quickTaxa, quickAction: 'quick-taxon',
+          results: taxaResults, pickAction: 'pick-taxon',
+          queryValue: local.taxonQuery
+        })}
+      </div>
+    </article>
+  `;
+}
+
+// 4) APARÊNCIA ---------------------------------------------------------------
+
+function renderAppearanceBox(settings) {
+  const themeLabel = settings.theme === 'light' ? 'Claro' : settings.theme === 'auto' ? 'Auto' : 'Escuro';
+  return `
+    <article class="cbox" data-open="${local.cbox.appearance}">
+      ${cboxHeader('appearance', '🎨', 'Aparência', 'Tema visual (escuro / claro / auto)', themeLabel)}
+      <div class="cbox-body">
+        <div class="field">
+          <span class="field-label">Tema</span>
+          <div class="segmented" role="radiogroup">
+            <button type="button" class="${settings.theme === 'dark' ? 'is-active' : ''}" data-action="set-theme" data-theme="dark">🌙 Escuro</button>
+            <button type="button" class="${settings.theme === 'light' ? 'is-active' : ''}" data-action="set-theme" data-theme="light">☀ Claro</button>
+            <button type="button" class="${settings.theme === 'auto' ? 'is-active' : ''}" data-action="set-theme" data-theme="auto">Auto (sistema)</button>
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+// 5) SOM ---------------------------------------------------------------------
+
+function renderSoundBox(settings) {
+  const vol = typeof settings.soundVolume === 'number' ? settings.soundVolume : 60;
+  return `
+    <article class="cbox" data-open="${local.cbox.sound}">
+      ${cboxHeader('sound', '🔊', 'Som', 'Volume dos efeitos sonoros (0 = mudo)', `Volume ${vol}%`)}
+      <div class="cbox-body">
+        <div class="volume-control" style="--vol: ${vol}%;">
+          <span class="vol-icon" aria-hidden="true" data-vol="${vol}">🔊</span>
+          <input class="volume-slider" type="range" min="0" max="100" value="${vol}" aria-label="Volume" style="--vol: ${vol}%;" data-action="set-volume" />
+          <span class="vol-num tnum">${vol}%</span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// API DE BUSCA — chamada pelo main.js
+// ---------------------------------------------------------------------------
+
 export async function runTaxonSearch() {
   const q = local.taxonQuery.trim();
   local.searchError = null;

@@ -1,8 +1,19 @@
 // =============================================================================
-// DATA VIEW — tela "Dados" com cartões de resumo, insights e histórico
+// DATA VIEW — tela "Dados" v2 (Field Notebook)
 // =============================================================================
-// Espelha UserPage.tsx. Recebe stats + history e renderiza tudo a partir de
-// agregações in-memory.
+// Espelha UserPage.tsx + ScreenData() do mockup:
+//   Layout:
+//     Mobile  → 1 coluna empilhada
+//     Desktop → grid 2 colunas (esquerda: stats + charts | direita: histórico + zona de risco)
+//
+//   Componentes:
+//     • Visão geral: 4 stat-tiles (Pontos, Precisão, Melhor sequência, Jogadas)
+//     • Atividade recente: calendário 7 dias com intensidade
+//     • Por dificuldade: bar charts
+//     • Por grupo biológico: bar charts
+//     • Histórico: filter pills SEMPRE visíveis (Todos/Acertos/Erros) +
+//       busca + lista paginada 8/página + history-row com border-left
+//     • Zona de risco: 2 botões (Resetar pontuação + Apagar histórico)
 // =============================================================================
 
 import { escapeHtml, formatDate } from '../format.js';
@@ -22,29 +33,11 @@ const groupMeta = {
   unknown: { label: 'Sem grupo', icon: '◌' }
 };
 
-function percent(stats) {
-  return `${stats.accuracy.toFixed(stats.accuracy % 1 === 0 ? 0 : 1)}%`;
-}
-
-function scoreLabel(value) {
-  return value > 0 ? `+${value}` : String(value);
-}
-
-function accuracy(correct, total) {
-  return total > 0 ? Math.round((correct / total) * 1000) / 10 : 0;
-}
-
-function normalizedGroup(item) {
-  return item.answerIconicTaxonName || 'unknown';
-}
-
-function groupLabel(value) {
-  return groupMeta[value]?.label ?? value;
-}
-
-function groupIcon(value) {
-  return groupMeta[value]?.icon ?? '◌';
-}
+function scoreLabel(value) { return value > 0 ? `+${value}` : String(value); }
+function accuracy(correct, total) { return total > 0 ? Math.round((correct / total) * 1000) / 10 : 0; }
+function normalizedGroup(item) { return item.answerIconicTaxonName || 'unknown'; }
+function groupLabel(value) { return groupMeta[value]?.label ?? value; }
+function groupIcon(value) { return groupMeta[value]?.icon ?? '◌'; }
 
 function pageNumbers(current, total) {
   if (total <= 5) return Array.from({ length: total }, (_, i) => i + 1);
@@ -62,7 +55,7 @@ function pageNumbers(current, total) {
 function computeInsights(history) {
   const byDifficulty = new Map();
   const byGroup = new Map();
-  const progress = new Map();
+  const lastDays = new Map();
   for (const item of history) {
     const difficulty = item.difficulty ?? 'normal';
     const diffBucket = byDifficulty.get(difficulty) ?? { total: 0, correct: 0 };
@@ -78,11 +71,7 @@ function computeInsights(history) {
 
     const day = (item.answeredAt ?? '').slice(0, 10);
     if (day) {
-      const dayBucket = progress.get(day) ?? { total: 0, correct: 0, score: 0 };
-      dayBucket.total += 1;
-      dayBucket.correct += item.wasCorrect ? 1 : 0;
-      dayBucket.score += item.scoreDelta;
-      progress.set(day, dayBucket);
+      lastDays.set(day, (lastDays.get(day) ?? 0) + 1);
     }
   }
   return {
@@ -92,159 +81,247 @@ function computeInsights(history) {
     byGroup: [...byGroup.entries()].map(([label, value]) => ({
       label, total: value.total, correct: value.correct, accuracy: accuracy(value.correct, value.total)
     })).sort((a, b) => b.total - a.total || b.accuracy - a.accuracy),
-    progress: [...progress.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-5).map(([label, v]) => ({ label, ...v }))
+    lastDays
   };
 }
 
-function rateBar(label, value, max = 100, detail, icon) {
-  const width = max > 0 ? Math.max(value > 0 ? 5 : 0, Math.round((value / max) * 100)) : 0;
+/**
+ * Constrói os 7 dias mais recentes (de hoje pra trás). Cada dia recebe
+ * uma "intensidade" (0..4) baseada na contagem de respostas.
+ */
+function recentDaysStrip(lastDays) {
+  const today = new Date();
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    const count = lastDays.get(iso) ?? 0;
+    let intensity = 0;
+    if (count > 0) intensity = 1;
+    if (count >= 3) intensity = 2;
+    if (count >= 6) intensity = 3;
+    if (count >= 10) intensity = 4;
+    const letter = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'][d.getDay()];
+    days.push({ label: letter, intensity, count });
+  }
+  return days;
+}
+
+// ---------------------------------------------------------------------------
+// PARTIALS
+// ---------------------------------------------------------------------------
+
+function statsTile(label, value, glyph = '') {
   return `
-    <div class="rate-bar-row">
-      <div class="rate-bar-head">
-        <span>${icon ? `<b aria-hidden="true">${icon}</b>` : ''}${escapeHtml(label)}</span>
-        <strong>${escapeHtml(detail ?? `${value}%`)}</strong>
-      </div>
-      <div class="rate-bar-track"><span style="width: ${width}%"></span></div>
+    <div class="stat-tile">
+      ${glyph ? `<span class="glyph" aria-hidden="true">${glyph}</span>` : ''}
+      <small>${escapeHtml(label)}</small>
+      <strong class="tnum">${escapeHtml(String(value))}</strong>
     </div>
   `;
 }
 
-function progressCard(item) {
-  const rate = accuracy(item.correct, item.total);
+function barRow(label, percent, detail, icon) {
+  const width = Math.max(percent > 0 ? 4 : 0, Math.round(percent));
   return `
-    <article class="recent-progress-card">
-      <div class="recent-progress-head">
-        <strong>${escapeHtml(item.label)}</strong>
-        <span>${item.correct}/${item.total} acertos</span>
-        <b class="${item.score >= 0 ? 'positive-score' : 'negative-score'}">${escapeHtml(scoreLabel(item.score))} pts</b>
+    <div class="bar-row">
+      <div class="bar-row-head">
+        <span>${icon ? `<span aria-hidden="true">${icon}</span> ` : ''}${escapeHtml(label)}</span>
+        <strong class="tnum">${escapeHtml(detail ?? `${percent}%`)}</strong>
       </div>
-      <div class="rate-bar-track"><span style="width: ${Math.max(5, rate)}%"></span></div>
-    </article>
+      <div class="bar-track"><span style="width: ${width}%;"></span></div>
+    </div>
   `;
+}
+
+function dayCell(day) {
+  return `<div class="day" data-int="${day.intensity}" title="${day.count} respostas">${escapeHtml(day.label)}</div>`;
 }
 
 function historyRow(item) {
+  const ok = item.wasCorrect;
   return `
-    <details class="history-row ${item.wasCorrect ? 'ok' : 'miss'}">
-      <summary>
-        ${item.thumbUrl ? `<img src="${escapeHtml(item.thumbUrl)}" alt="Miniatura da pergunta respondida" loading="lazy" />` : ''}
-        <div>
-          <strong>${item.wasCorrect ? 'Acerto' : 'Erro'} · ${escapeHtml(item.difficulty ?? 'normal')} · ${escapeHtml(scoreLabel(item.scoreDelta))}</strong>
-          <span>${escapeHtml(item.correctLabel ?? 'Resposta não informada')}</span>
-          <small>${escapeHtml(formatDate(item.answeredAt))}</small>
-        </div>
-      </summary>
-      <div class="history-expand">
-        ${!item.wasCorrect ? `<p><strong>Você marcou:</strong> ${escapeHtml(item.selectedLabel ?? 'n/d')}</p>` : ''}
-        <p><strong>Resposta certa:</strong> ${escapeHtml(item.correctLabel ?? 'n/d')}</p>
-        <p><strong>Grupo:</strong> ${escapeHtml(groupLabel(normalizedGroup(item)))}</p>
-        ${item.observationUri ? `<a href="${escapeHtml(item.observationUri)}" target="_blank" rel="noreferrer">Abrir observação no iNaturalist</a>` : ''}
+    <div class="history-row" data-correct="${ok}">
+      ${item.thumbUrl
+        ? `<div class="thumb"><img src="${escapeHtml(item.thumbUrl)}" alt="" loading="lazy" /></div>`
+        : '<div class="thumb"></div>'}
+      <div class="meta">
+        <strong>
+          ${ok ? 'Acerto' : 'Erro'}
+          <span class="tag">${escapeHtml(item.difficulty ?? 'normal')}</span>
+        </strong>
+        <span>${escapeHtml(item.correctLabel ?? 'Resposta não informada')}</span>
+        <small>${escapeHtml(formatDate(item.answeredAt))}</small>
       </div>
-    </details>
+      <div class="delta tnum">${escapeHtml(scoreLabel(item.scoreDelta))}</div>
+    </div>
   `;
 }
 
-// Estado local de UI para esta view (paginação + filtro).
-const local = { page: 1, filter: 'all', filtersOpen: false };
+// ---------------------------------------------------------------------------
+// LOCAL UI STATE
+// ---------------------------------------------------------------------------
+
+const local = { page: 1, filter: 'all', searchQuery: '' };
 
 export function getDataLocal() { return local; }
 export function setDataLocal(partial) { Object.assign(local, partial); }
 
+// ---------------------------------------------------------------------------
+// MAIN RENDER
+// ---------------------------------------------------------------------------
+
 export function renderDataView(stats, history) {
   const insights = computeInsights(history);
-  const filteredHistory = local.filter === 'correct' ? history.filter((h) => h.wasCorrect)
-    : local.filter === 'miss' ? history.filter((h) => !h.wasCorrect)
-    : history;
+  const days = recentDaysStrip(insights.lastDays);
 
-  const totalPages = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE));
+  // Filtro por status (Todos/Acertos/Erros)
+  let filtered = local.filter === 'correct' ? history.filter((h) => h.wasCorrect)
+    : local.filter === 'miss' ? history.filter((h) => !h.wasCorrect)
+    : history.slice();
+  // Filtro por busca (nome científico ou popular)
+  if (local.searchQuery.trim()) {
+    const q = local.searchQuery.trim().toLowerCase();
+    filtered = filtered.filter((h) =>
+      (h.correctLabel ?? '').toLowerCase().includes(q) ||
+      (h.selectedLabel ?? '').toLowerCase().includes(q)
+    );
+  }
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(local.page, totalPages);
   const start = (safePage - 1) * PAGE_SIZE;
-  const visibleHistory = filteredHistory.slice(start, start + PAGE_SIZE);
+  const visible = filtered.slice(start, start + PAGE_SIZE);
 
-  const maxDifficultyTotal = Math.max(0, ...insights.byDifficulty.map((i) => i.total));
-
-  const paginationButtons = pageNumbers(safePage, totalPages).map((item, idx) => item === 'gap'
-    ? `<span>…</span>`
-    : `<button type="button" class="${item === safePage ? 'active' : ''}" data-action="set-page" data-page="${item}">${item}</button>`
+  const paginationButtons = pageNumbers(safePage, totalPages).map((item) => item === 'gap'
+    ? '<button class="page-num dots" disabled>…</button>'
+    : `<button type="button" class="page-num ${item === safePage ? 'is-active' : ''}" data-action="set-page" data-page="${item}">${item}</button>`
   ).join('');
 
-  return `
-    <section class="screen-scroll user-screen drag-scroll-surface" aria-label="Estatísticas e histórico" data-scroll>
-      <div class="simple-page-head">
+  const summaryCard = `
+    <article class="card">
+      <header class="card-head">
         <div>
-          <p class="eyebrow">Quiz iNaturalist</p>
-          <h1>Dados</h1>
+          <span class="kicker">Resumo local</span>
+          <h2>Visão geral</h2>
+        </div>
+        <span class="badge">${stats.totalQuestions} jogadas</span>
+      </header>
+      <div class="stats-grid">
+        ${statsTile('Pontos', stats.score, '★')}
+        ${statsTile('Precisão', `${Math.round(stats.accuracy)}%`, '🎯')}
+        ${statsTile('Melhor sequência', stats.bestStreak, '🔥')}
+        ${statsTile('Jogadas', stats.totalQuestions, '▦')}
+      </div>
+    </article>
+  `;
+
+  const calendarCard = `
+    <article class="card">
+      <header class="card-head">
+        <div><span class="kicker">Calendário</span><h2>Atividade recente</h2></div>
+        <span class="badge">7 dias</span>
+      </header>
+      <div class="day-strip">${days.map(dayCell).join('')}</div>
+    </article>
+  `;
+
+  const difficultyCard = `
+    <article class="card">
+      <header class="card-head">
+        <div><span class="kicker">Análise</span><h2>Por dificuldade</h2></div>
+        <span class="badge">${insights.byDifficulty.length}</span>
+      </header>
+      ${insights.byDifficulty.length === 0
+        ? '<p style="font-size: 13px; color: var(--text-faint); margin: 0;">Sem dados suficientes ainda.</p>'
+        : `<div>${insights.byDifficulty.map((i) =>
+            barRow(`${i.label} · ${i.correct}/${i.total}`, i.accuracy, `${i.accuracy}%`)
+          ).join('')}</div>`}
+    </article>
+  `;
+
+  const groupCard = `
+    <article class="card">
+      <header class="card-head">
+        <div><span class="kicker">Análise</span><h2>Por grupo biológico</h2></div>
+        <span class="badge">${insights.byGroup.length}</span>
+      </header>
+      ${insights.byGroup.length === 0
+        ? '<p style="font-size: 13px; color: var(--text-faint); margin: 0;">Os grupos aparecerão conforme você responder.</p>'
+        : `<div>${insights.byGroup.map((i) =>
+            barRow(groupLabel(i.label), i.accuracy, `${i.accuracy}%`, groupIcon(i.label))
+          ).join('')}</div>`}
+    </article>
+  `;
+
+  const historyCard = `
+    <article class="card">
+      <header class="card-head">
+        <div><span class="kicker">Registro</span><h2>Histórico</h2></div>
+        <span class="badge">${filtered.length} entradas</span>
+      </header>
+      <div class="history-toolbar">
+        <div class="filter-pills">
+          <button type="button" class="filter-pill ${local.filter === 'all' ? 'is-active' : ''}" data-action="set-filter" data-filter="all">Todos</button>
+          <button type="button" class="filter-pill ${local.filter === 'correct' ? 'is-active' : ''}" data-action="set-filter" data-filter="correct">Acertos</button>
+          <button type="button" class="filter-pill ${local.filter === 'miss' ? 'is-active' : ''}" data-action="set-filter" data-filter="miss">Erros</button>
+        </div>
+        <input class="input" placeholder="Buscar nome científico…" data-input="history-search" value="${escapeHtml(local.searchQuery)}" />
+      </div>
+      <div class="history-list">
+        ${visible.length === 0
+          ? '<p style="font-size: 13px; color: var(--text-faint); padding: 16px;">Nenhuma partida registrada para este filtro.</p>'
+          : visible.map(historyRow).join('')}
+      </div>
+      ${totalPages > 1 ? `
+        <div class="pagination">
+          <button type="button" class="page-num" aria-label="Anterior" ${safePage <= 1 ? 'disabled' : ''} data-action="prev-page">‹</button>
+          ${paginationButtons}
+          <button type="button" class="page-num" aria-label="Próxima" ${safePage >= totalPages ? 'disabled' : ''} data-action="next-page">›</button>
+        </div>
+      ` : ''}
+    </article>
+  `;
+
+  const dangerCard = `
+    <article class="card danger-zone">
+      <header class="card-head">
+        <div>
+          <span class="kicker" style="color: var(--err);">Zona de risco</span>
+          <h2>Apagar dados locais</h2>
+        </div>
+      </header>
+      <p class="danger-desc">
+        Remove <strong>todo o histórico</strong> e <strong>zera as estatísticas</strong> deste navegador.
+        A ação é irreversível — peço confirmação dupla antes de executar.
+      </p>
+      <div class="danger-actions">
+        <button type="button" class="btn btn-ghost btn-block-mobile" data-action="reset-stats">↺ Resetar pontuação</button>
+        <button type="button" class="btn btn-danger btn-block-mobile" data-action="clear-history">⚠ Apagar histórico</button>
+      </div>
+    </article>
+  `;
+
+  return `
+    <section class="data-screen" aria-label="Estatísticas e histórico" data-scroll>
+      <header class="page-head">
+        <span class="kicker">Quiz · iNaturalist</span>
+        <h1>Dados</h1>
+      </header>
+
+      <div class="config-grid">
+        <div style="display: grid; gap: var(--sp-4); align-content: start;">
+          ${summaryCard}
+          ${calendarCard}
+          ${difficultyCard}
+          ${groupCard}
+        </div>
+        <div style="display: grid; gap: var(--sp-4); align-content: start;">
+          ${historyCard}
+          ${dangerCard}
         </div>
       </div>
-
-      <section class="user-panel data-panel" aria-label="Dados locais">
-        <div class="user-head data-head">
-          <div>
-            <p class="eyebrow">Resumo local</p>
-            <h2>Dados</h2>
-          </div>
-          <div class="data-head-actions">
-            <button type="button" class="ghost icon-button danger-action" data-action="clear-history">Apagar</button>
-          </div>
-        </div>
-
-        <div class="profile-stats data-summary-grid">
-          <div><span>Pontos</span><strong>${stats.score}</strong></div>
-          <div><span>Jogadas</span><strong>${stats.totalQuestions}</strong></div>
-          <div><span>Precisão</span><strong>${escapeHtml(percent(stats))}</strong></div>
-          <div><span>Melhor sequência</span><strong>${stats.bestStreak}</strong></div>
-        </div>
-
-        <section class="data-card recent-card" aria-label="Progresso recente">
-          <div class="data-card-head"><h3>Progresso recente</h3><span>${insights.progress.length > 0 ? 'últimos dias' : 'sem dados'}</span></div>
-          ${insights.progress.length === 0 ? '<p class="fine-print">Responda algumas rodadas para ver tendência diária.</p>' : ''}
-          <div class="progress-list compact-progress-list">
-            ${insights.progress.map(progressCard).join('')}
-          </div>
-        </section>
-
-        <section class="data-card" aria-label="Desempenho por dificuldade">
-          <div class="data-card-head"><h3>Desempenho por dificuldade</h3><span>${history.length} registros</span></div>
-          ${insights.byDifficulty.length === 0 ? '<p class="fine-print">Sem dados suficientes ainda.</p>' : ''}
-          <div class="rate-list">
-            ${insights.byDifficulty.map((i) => rateBar(`${i.label} · ${i.accuracy}%`, i.total, maxDifficultyTotal, String(i.total))).join('')}
-          </div>
-        </section>
-
-        <section class="data-card" aria-label="Taxa de acerto por grupos">
-          <div class="data-card-head"><h3>Taxa de acerto por grupos</h3><span>${insights.byGroup.length} grupos</span></div>
-          ${insights.byGroup.length === 0 ? '<p class="fine-print">Os grupos aparecerão conforme você responder.</p>' : ''}
-          <div class="rate-list group-rate-list">
-            ${insights.byGroup.map((i) => rateBar(groupLabel(i.label), i.accuracy, 100, `${i.accuracy}%`, groupIcon(i.label))).join('')}
-          </div>
-        </section>
-
-        <section class="data-card history-card" aria-label="Todos os registros">
-          <div class="data-card-head">
-            <h3>Todos os registros</h3>
-            <span>${filteredHistory.length}/${history.length}</span>
-          </div>
-          <div class="history-toolbar">
-            <button type="button" class="ghost icon-button" data-action="toggle-filters">⌕ Filtros</button>
-            ${local.filtersOpen ? `
-              <div class="history-filter-row" aria-label="Filtros de histórico">
-                <button type="button" class="${local.filter === 'all' ? 'active' : ''}" data-action="set-filter" data-filter="all">Todos</button>
-                <button type="button" class="${local.filter === 'correct' ? 'active' : ''}" data-action="set-filter" data-filter="correct">Acertos</button>
-                <button type="button" class="${local.filter === 'miss' ? 'active' : ''}" data-action="set-filter" data-filter="miss">Erros</button>
-              </div>
-            ` : ''}
-          </div>
-          <div class="history-list">
-            ${visibleHistory.length === 0 ? '<p class="fine-print">Nenhuma partida registrada para este filtro.</p>' : ''}
-            ${visibleHistory.map(historyRow).join('')}
-          </div>
-          <div class="pagination-row numbered-pagination">
-            <button type="button" class="secondary pager-arrow" aria-label="Página anterior" ${safePage <= 1 ? 'disabled' : ''} data-action="prev-page">‹</button>
-            <div class="page-number-list">${paginationButtons}</div>
-            <button type="button" class="secondary pager-arrow" aria-label="Próxima página" ${safePage >= totalPages ? 'disabled' : ''} data-action="next-page">›</button>
-          </div>
-        </section>
-      </section>
     </section>
   `;
 }
