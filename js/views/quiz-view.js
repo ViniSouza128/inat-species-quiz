@@ -11,8 +11,8 @@
 //     <div.quiz-screen>
 //       <section.hero> ..................... foto (com zoom gestual)
 //       <div.play>
-//         <div.feedback> ................... dock acima das alternativas
-//         <div.choices[data-mode]> ......... 4 alternativas
+//         <div.choices[data-mode]> ......... 4 alternativas (ancoradas embaixo)
+//         <div.feedback> ................... dock fixo no rodapé do .play
 // =============================================================================
 
 import { escapeHtml, formatDate } from '../format.js';
@@ -311,8 +311,8 @@ function renderQuizStage(state) {
     <div class="quiz-screen" data-question-id="${escapeHtml(state.question.questionId)}">
       ${renderHero(state.question, state.answered)}
       <div class="play">
-        ${renderFeedback(state)}
         ${renderChoices(state)}
+        ${renderFeedback(state)}
       </div>
     </div>
   `;

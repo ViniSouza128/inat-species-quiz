@@ -392,9 +392,12 @@ img { display: block; max-width: 100%; }
 /* ============================================================================
    6. QUIZ SCREEN — hero foto + play (HUD + título + feedback + alternativas)
    ----------------------------------------------------------------------------
-   Mobile (base): stack vertical sem scroll. Hero shrinka até 34% de altura;
-   play ocupa o restante (alternativas+feedback).
+   Mobile (base): stack vertical sem scroll. O bloco play (alternativas +
+   feedback) é ancorado embaixo (altura de conteúdo), e o hero cresce para
+   ocupar todo o espaço restante acima — a foto se centraliza dentro dele.
    Desktop (≥1024px): grid horizontal 60/40, hero à esquerda e play à direita.
+   Dentro da coluna do play, alternativas+feedback também ficam ancorados no
+   rodapé (HUD/título no topo, espaço livre no meio).
    ============================================================================ */
 .quiz-screen {
   flex: 1 1 auto;
@@ -424,16 +427,17 @@ img { display: block; max-width: 100%; }
   overflow: hidden;
   background: var(--surface);
   isolation: isolate;
-  flex: 0 1 34%;
+  /* Cresce para preencher o espaço acima do .play; a foto usa object-fit:
+     contain e object-position: center, então ela se centraliza no espaço
+     disponível automaticamente. */
+  flex: 1 1 0;
   min-height: clamp(110px, 18dvh, 160px);
-  max-height: 320px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
 }
 @media (min-width: 1024px) {
   .hero {
     flex: initial;
-    max-height: none;
     margin: var(--sp-5) 0 var(--sp-5) var(--sp-5);
   }
 }
@@ -508,22 +512,32 @@ img { display: block; max-width: 100%; }
 .hero[data-state="ok"]  { animation: pulse-ok var(--d-slow) var(--ease-spring); }
 .hero[data-state="err"] { animation: shake     var(--d)      var(--ease-out); }
 
-/* ---------- 6.2 PLAY (HUD + título + feedback + alternativas) ----------- */
+/* ---------- 6.2 PLAY (HUD + título + alternativas + feedback) -----------
+   Flex column em ambos os layouts. As alternativas levam `margin-top: auto`
+   para empurrar a si mesmas + o feedback até o rodapé do contêiner. No
+   mobile o .play é content-sized (o hero cresce acima); no desktop ele
+   ocupa toda a altura da célula 60/40 (HUD/título no topo, alternativas e
+   feedback ancorados embaixo). */
 .play {
   min-height: 0;
   min-width: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
+  flex: 0 0 auto;
 }
 @media (min-width: 1024px) {
   .play {
     padding: clamp(12px, 2.5dvh, 24px);
     gap: clamp(8px, 1.5dvh, 16px);
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    /* Em grid (.quiz-screen desktop) o .play é grid-item; o `flex` do mobile
+       deixa de aplicar e ele estica para preencher a célula. */
+    flex: initial;
   }
 }
+/* Empurra alternativas (e o feedback que vem depois) para o rodapé do .play. */
+.play > .choices { margin-top: auto; }
 
 .play-title {
   font-family: var(--font-serif);
