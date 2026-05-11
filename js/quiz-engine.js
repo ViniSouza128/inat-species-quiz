@@ -374,17 +374,21 @@ function buildObservationParams(input, relaxed = false) {
   };
   const selectedGroups = (input.iconicTaxa ?? []).filter((v) => v && v !== 'all');
 
+  // Filtros TAXONÔMICOS — preservados em qualquer modo. O usuário que escolheu
+  // "Formicidae" não quer ver outras famílias só porque o fallback relaxed
+  // foi acionado; preferimos expandir o escopo geográfico a misturar táxons.
+  if (selectedGroups.length > 0) params.iconic_taxa = selectedGroups;
+  if (input.taxonId) params.taxon_id = input.taxonId;
+
+  // Filtros GEOGRÁFICOS — só na primeira tentativa. No relaxed expandimos
+  // para o mundo todo (mantendo táxon/grupo).
   if (!relaxed) {
-    if (selectedGroups.length > 0) params.iconic_taxa = selectedGroups;
-    if (input.taxonId) params.taxon_id = input.taxonId;
     if (input.placeId) params.place_id = input.placeId;
     if (input.lat !== undefined && input.lng !== undefined) {
       params.lat = input.lat;
       params.lng = input.lng;
       params.radius = input.radius ?? 50;
     }
-  } else if (selectedGroups.length > 0) {
-    params.iconic_taxa = selectedGroups;
   }
   return params;
 }
