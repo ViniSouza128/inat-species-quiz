@@ -217,18 +217,20 @@ function renderDifficultyBox(settings) {
 // 3) FILTROS (Locais + Táxons) -----------------------------------------------
 
 function filterSubGroup(opts) {
-  const { glyph, title, count, searchPlaceholder, searchInput, searchAction, currentTag, removeAction, quickList, quickAction, results, pickAction } = opts;
+  const { glyph, title, count, searchPlaceholder, searchInput, searchAction, currentTags, removeAction, quickList, quickAction, results, pickAction } = opts;
 
-  const tagStrip = currentTag
-    ? `<span class="tag" data-action="${removeAction}">
-         <span>${escapeHtml(currentTag.label)}</span>
-         ${currentTag.meta ? `<span class="meta">${escapeHtml(currentTag.meta)}</span>` : ''}
-         <button type="button" aria-label="Remover ${escapeHtml(currentTag.label)}">✕</button>
-       </span>`
-    : '';
+  // Multi-select tag-strip: renderiza TODAS as tags selecionadas. Cada
+  // botão "✕" leva o `data-id` para o handler conseguir remover só aquela.
+  const tagStrip = (currentTags || []).map((tag) => `
+    <span class="tag" data-id="${tag.id}">
+      <span>${escapeHtml(tag.label)}</span>
+      ${tag.meta ? `<span class="meta">${escapeHtml(tag.meta)}</span>` : ''}
+      <button type="button" data-action="${removeAction}" data-id="${tag.id}" aria-label="Remover ${escapeHtml(tag.label)}">✕</button>
+    </span>
+  `).join('');
 
   const quickAdd = quickList.map((q) => {
-    const isActive = currentTag && currentTag.label === q;
+    const isActive = (currentTags || []).some((tag) => tag.label.toLowerCase().includes(q.toLowerCase()));
     return `<button type="button" data-added="${isActive}" data-action="${quickAction}" data-quick="${escapeHtml(q)}">${escapeHtml(q)}</button>`;
   }).join('');
 
@@ -264,9 +266,13 @@ function filterSubGroup(opts) {
 }
 
 function renderFiltersBox(settings, selectedGroups) {
-  const placeTag = settings.placeId ? { label: settings.placeLabel ?? `Local ${settings.placeId}`, meta: 'local' } : null;
-  const taxonTag = settings.taxonId ? { label: settings.taxonLabel ?? `Táxon ${settings.taxonId}`, meta: 'táxon' } : null;
-  const filtersCount = (placeTag ? 1 : 0) + (taxonTag ? 1 : 0);
+  // Multi-select: lê as listas inteiras de settings.taxa[]/places[].
+  // Cada tag aparece como pill removível na .tag-strip.
+  const placesList = Array.isArray(settings.places) ? settings.places : [];
+  const taxaList = Array.isArray(settings.taxa) ? settings.taxa : [];
+  const placeTags = placesList.map((p) => ({ id: p.id, label: p.label, meta: 'local' }));
+  const taxonTags = taxaList.map((t) => ({ id: t.id, label: t.label, meta: 'táxon' }));
+  const filtersCount = placeTags.length + taxonTags.length;
   const activeGroups = selectedGroups.filter((v) => v !== 'all').length;
   const totalGroups = ALL_GROUP_VALUES.length;
   let groupsPart;
@@ -300,19 +306,19 @@ function renderFiltersBox(settings, selectedGroups) {
           <div class="group-chips">${renderGroupChips(selectedGroups)}</div>
         </div>
         ${filterSubGroup({
-          glyph: '📍', title: 'Locais', count: placeTag ? 1 : 0,
+          glyph: '📍', title: 'Locais', count: placeTags.length,
           searchPlaceholder: 'Buscar local — ex: Brasil, Pantanal',
           searchInput: 'place', searchAction: 'search-place',
-          currentTag: placeTag, removeAction: 'clear-place',
+          currentTags: placeTags, removeAction: 'remove-place',
           quickList: quickPlaces, quickAction: 'quick-place',
           results: placesResults, pickAction: 'pick-place',
           queryValue: local.placeQuery
         })}
         ${filterSubGroup({
-          glyph: '🔬', title: 'Táxons', count: taxonTag ? 1 : 0,
+          glyph: '🔬', title: 'Táxons', count: taxonTags.length,
           searchPlaceholder: 'Buscar táxon — ex: Felidae, Orchidaceae',
           searchInput: 'taxon', searchAction: 'search-taxon',
-          currentTag: taxonTag, removeAction: 'clear-taxon',
+          currentTags: taxonTags, removeAction: 'remove-taxon',
           quickList: quickTaxa, quickAction: 'quick-taxon',
           results: taxaResults, pickAction: 'pick-taxon',
           queryValue: local.taxonQuery

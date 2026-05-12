@@ -1357,10 +1357,30 @@ img { display: block; max-width: 100%; }
   background: var(--line-strong);
   border-radius: 999px;
 }
+/* Desktop: padding lateral GENEROSO — em telas largas, 12px de cada lado
+   deixava o conteúdo grudado nas bordas. Usamos clamp pra escalar entre
+   72px (1024px) e 160px (2560px), passando por ~112px em 1440-1920. */
 @media (min-width: 1024px) {
   .config-screen,
   .data-screen {
-    padding: var(--sp-5) var(--sp-7);
+    padding: var(--sp-5) clamp(72px, 8vw, 160px);
+  }
+}
+
+/* Grid de 2 colunas em desktop para a tela de Dados — em mobile vira uma
+   coluna só. O `gap: var(--sp-4)` é essencial: sem ele, em mobile o
+   `groupCard` (fim da col 1) e o `historyCard` (início da col 2) ficavam
+   colados, sem o respiro que separa os demais cartões. */
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-4);
+  align-items: start;
+}
+@media (min-width: 1024px) {
+  .config-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--sp-5);
   }
 }
 

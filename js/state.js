@@ -29,10 +29,15 @@ export const ALL_GROUP_VALUES = ['Aves', 'Mammalia', 'Reptilia', 'Amphibia', 'Ac
 
 export const DEFAULT_SETTINGS = {
   iconicTaxa: ['Aves'],
+  // Multi-select de táxons e locais. Cada item: { id, label, rank?, iconicTaxonName? }.
+  // O quiz busca observações de QUALQUER um deles (OR lógico no iNat) —
+  // permite combinar p.ex. Formicidae + Salticidae OU 3 estados do Centro-Oeste.
+  taxa: [],
+  places: [],
+  // Espelhos do PRIMEIRO item de taxa[]/places[] — DEPRECATED, mantidos
+  // para snapshots de histórico antigos e helpers de mensagem de erro.
   taxonId: null,
   taxonLabel: null,
-  // iconic_taxon_name do táxon selecionado — usado para detectar conflito
-  // com `iconicTaxa` (ex.: Aves + taxon Formicidae = sem resultados).
   taxonIconicName: null,
   placeId: null,
   placeLabel: null,
@@ -89,12 +94,24 @@ function normalizeStoredGroups(value) {
 
 export function loadSettings() {
   const parsed = safeJsonParse(localStorage.getItem(SETTINGS_KEY), {});
-  return {
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...parsed,
     iconicTaxa: normalizeStoredGroups(parsed.iconicTaxa),
+    taxa: Array.isArray(parsed.taxa) ? parsed.taxa : [],
+    places: Array.isArray(parsed.places) ? parsed.places : [],
     choices: 4
   };
+  // Migração de instalações antigas: single → array. Se taxa[]/places[]
+  // chegaram vazios mas o registro tem taxonId/placeId persistido, materializa
+  // o single como item único do novo array.
+  if (merged.taxa.length === 0 && merged.taxonId && merged.taxonLabel) {
+    merged.taxa = [{ id: merged.taxonId, label: merged.taxonLabel, rank: '', iconicTaxonName: merged.taxonIconicName ?? null }];
+  }
+  if (merged.places.length === 0 && merged.placeId && merged.placeLabel) {
+    merged.places = [{ id: merged.placeId, label: merged.placeLabel, rank: '' }];
+  }
+  return merged;
 }
 
 export function saveSettings(settings) {

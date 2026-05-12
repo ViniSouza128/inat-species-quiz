@@ -374,16 +374,21 @@ function buildObservationParams(input, relaxed = false) {
   };
   const selectedGroups = (input.iconicTaxa ?? []).filter((v) => v && v !== 'all');
 
-  // Filtros TAXONÔMICOS — preservados em qualquer modo. O usuário que escolheu
-  // "Formicidae" não quer ver outras famílias só porque o fallback relaxed
-  // foi acionado; preferimos expandir o escopo geográfico a misturar táxons.
+  // Filtros TAXONÔMICOS — preservados em qualquer modo. Multi-select:
+  // taxonIds[] vira `taxon_id=1&taxon_id=2` (OR lógico no iNat). Permite
+  // misturar Formicidae + Salticidae em uma só rodada.
   if (selectedGroups.length > 0) params.iconic_taxa = selectedGroups;
-  if (input.taxonId) params.taxon_id = input.taxonId;
+  if (Array.isArray(input.taxonIds) && input.taxonIds.length > 0) {
+    params.taxon_id = input.taxonIds;
+  }
 
   // Filtros GEOGRÁFICOS — só na primeira tentativa. No relaxed expandimos
-  // para o mundo todo (mantendo táxon/grupo).
+  // para o mundo todo (mantendo táxon/grupo). Multi-select: placeIds[] vira
+  // `place_id=1&place_id=2` — permite p.ex. 3 estados do Centro-Oeste.
   if (!relaxed) {
-    if (input.placeId) params.place_id = input.placeId;
+    if (Array.isArray(input.placeIds) && input.placeIds.length > 0) {
+      params.place_id = input.placeIds;
+    }
     if (input.lat !== undefined && input.lng !== undefined) {
       params.lat = input.lat;
       params.lng = input.lng;
@@ -423,10 +428,20 @@ function uuidv4() {
  * normaliza para o input do iNat, e devolve um QuizQuestion completo.
  */
 export async function createQuestion(settings) {
+  // Multi-select: prioriza taxa[]/places[]. Fallback para taxonId/placeId
+  // single (instalações antigas que ainda não migraram), só pra não quebrar
+  // o jogo no primeiro carregamento depois do update.
+  const taxonIds = Array.isArray(settings.taxa) && settings.taxa.length > 0
+    ? settings.taxa.map((t) => t.id).filter((n) => Number.isFinite(n))
+    : (settings.taxonId ? [settings.taxonId] : []);
+  const placeIds = Array.isArray(settings.places) && settings.places.length > 0
+    ? settings.places.map((p) => p.id).filter((n) => Number.isFinite(n))
+    : (settings.placeId ? [settings.placeId] : []);
+
   const input = {
     iconicTaxa: settings.iconicTaxa.filter((v) => v !== 'all'),
-    taxonId: settings.taxonId ?? undefined,
-    placeId: settings.placeId ?? undefined,
+    taxonIds,
+    placeIds,
     difficulty: settings.difficulty,
     choices: 4,
     rank: 'species'

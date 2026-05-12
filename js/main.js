@@ -234,7 +234,8 @@ async function fillPrefetchQueue() {
   if (needed <= 0) return;
   // Sem grupos e sem táxon → quiz bloqueado, nem chega a buscar.
   const activeGroups = (state.settings.iconicTaxa || []).filter((v) => v && v !== 'all');
-  if (activeGroups.length === 0 && !state.settings.taxonId) return;
+  const taxaCount = Array.isArray(state.settings.taxa) ? state.settings.taxa.length : 0;
+  if (activeGroups.length === 0 && taxaCount === 0) return;
   state.prefetchInProgress = true;
 
   try {
@@ -366,7 +367,8 @@ async function nextQuestion() {
   // sentinela "no-filters-selected" — classifyQuizError mapeia para uma
   // mensagem específica orientando a marcar pelo menos um grupo.
   const activeGroups = (state.settings.iconicTaxa || []).filter((v) => v && v !== 'all');
-  if (activeGroups.length === 0 && !state.settings.taxonId) {
+  const taxaCount = Array.isArray(state.settings.taxa) ? state.settings.taxa.length : 0;
+  if (activeGroups.length === 0 && taxaCount === 0) {
     state.question = null;
     state.loading = false;
     state.error = 'no-filters-selected';
@@ -529,16 +531,22 @@ function clearHistory() {
  */
 function toggleGroup(groupValue) {
   const selectedGroups = normalizeGroups(state.settings.iconicTaxa);
+  const taxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+  // Iconics necessários para sustentar TODOS os táxons ativos. Dedup via Set.
+  const requiredIconics = Array.from(new Set(
+    taxa
+      .map((t) => t.iconicTaxonName ?? null)
+      .filter((v) => typeof v === 'string' && ALL_GROUP_VALUES.includes(v))
+  ));
+
   let next;
   if (groupValue === 'all') {
     const currentlyAll = selectedGroups.includes('all');
     if (!currentlyAll) {
       next = [...ALL_GROUP_VALUES];
-    } else if (state.settings.taxonId && state.settings.taxonIconicName
-               && ALL_GROUP_VALUES.includes(state.settings.taxonIconicName)) {
-      // Mantém apenas o iconic do táxon ativo (única forma de não
-      // orfanar o filtro do usuário).
-      next = [state.settings.taxonIconicName];
+    } else if (requiredIconics.length > 0) {
+      // Mantém só os iconics necessários para os táxons ativos.
+      next = requiredIconics;
     } else {
       next = []; // vazio intencional — bloqueia o quiz com mensagem.
     }
@@ -549,19 +557,19 @@ function toggleGroup(groupValue) {
       : [...working, groupValue];
   }
 
-  // Conflito só faz sentido quando sobra algum grupo. Lista vazia é
-  // tratada pelo bloqueio do quiz (mensagem específica).
-  if (next.length > 0 && state.settings.taxonId && state.settings.taxonIconicName) {
+  // Conflito: a NOVA lista deixa algum táxon órfão. Se sim, abre modal para
+  // o primeiro táxon órfão encontrado — usuário cancela ou remove esse só.
+  if (next.length > 0 && taxa.length > 0) {
     const candidate = normalizeGroups(next);
-    const conflict = detectIconicConflict(state.settings.taxonIconicName, candidate);
-    if (conflict) {
+    const orphan = taxa.find((t) => detectIconicConflict(t.iconicTaxonName ?? null, candidate) !== null);
+    if (orphan) {
       state.confirmModal = {
         kind: 'changing-groups',
         newGroups: next,
-        taxonId: state.settings.taxonId,
-        taxonLabel: state.settings.taxonLabel,
-        taxonSci: state.settings.taxonLabel,
-        taxonIconic: state.settings.taxonIconicName
+        taxonId: orphan.id,
+        taxonLabel: orphan.label,
+        taxonSci: orphan.label,
+        taxonIconic: orphan.iconicTaxonName
       };
       render();
       return;
@@ -571,10 +579,13 @@ function toggleGroup(groupValue) {
   updateSettings({ iconicTaxa: normalizeGroups(next) });
 }
 
-/** Aplica um táxon selecionado, abrindo o modal de confirmação se houver
- *  conflito com os grupos biológicos ativos. */
+/** Aplica um táxon selecionado, ADICIONANDO ao array `taxa[]` (multi-select).
+ *  Se houver conflito com os grupos biológicos ativos, abre o modal de
+ *  confirmação e deixa o usuário decidir. */
 function tryApplyTaxon({ id, label, sci, iconic }) {
-  const selectedGroups = normalizeGroups(state.settings.iconicTaxa.length > 0 ? state.settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
+  const taxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+  if (taxa.some((t) => t.id === id)) return; // já está no filtro
+  const selectedGroups = normalizeGroups(state.settings.iconicTaxa);
   const conflict = detectIconicConflict(iconic, selectedGroups);
   if (conflict) {
     state.confirmModal = {
@@ -588,7 +599,22 @@ function tryApplyTaxon({ id, label, sci, iconic }) {
     render();
     return;
   }
-  updateSettings({ taxonId: id, taxonLabel: label, taxonIconicName: iconic });
+  commitAddTaxon({ id, label, rank: '', iconicTaxonName: iconic });
+}
+
+/** Adiciona um táxon ao array `taxa[]` (sem checagem) e sincroniza os
+ *  espelhos legados (taxonId/Label/IconicName). */
+function commitAddTaxon(picked) {
+  const taxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+  if (taxa.some((t) => t.id === picked.id)) return;
+  const next = [...taxa, picked];
+  const head = next[0];
+  updateSettings({
+    taxa: next,
+    taxonId: head.id,
+    taxonLabel: head.label,
+    taxonIconicName: head.iconicTaxonName ?? null
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +696,7 @@ document.addEventListener('click', async (event) => {
       toggleGroup(target.dataset.group);
       return;
 
-    // Multi-select de filtros (Locais / Táxons)
+    // Multi-select de filtros (Locais / Táxons) — adiciona ao array.
     case 'pick-taxon': {
       const id = Number(target.dataset.id);
       const label = target.dataset.label;
@@ -678,12 +704,19 @@ document.addEventListener('click', async (event) => {
       tryApplyTaxon({ id, label, sci: target.dataset.extra ?? label, iconic });
       return;
     }
-    case 'pick-place':
+    case 'pick-place': {
+      const id = Number(target.dataset.id);
+      const label = target.dataset.label;
+      const places = Array.isArray(state.settings.places) ? state.settings.places : [];
+      if (places.some((p) => p.id === id)) return; // já adicionado
+      const next = [...places, { id, label, rank: '' }];
       updateSettings({
-        placeId: Number(target.dataset.id),
-        placeLabel: target.dataset.label
+        places: next,
+        placeId: next[0].id,
+        placeLabel: next[0].label
       });
       return;
+    }
 
     // Modal de conflito — confirmar/cancelar
     case 'confirm-close':
@@ -698,59 +731,124 @@ document.addEventListener('click', async (event) => {
       return;
     case 'confirm-apply-taxon': {
       // Usuário escolheu: aplicar o táxon e trocar grupos para Todos.
+      // Adiciona o táxon ao array existente (multi-select).
       const m = state.confirmModal;
       if (!m) return;
       state.confirmModal = null;
-      // Aplica os dois em uma única atualização para não rodar dois renders.
+      const existingTaxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+      const newTaxa = existingTaxa.some((t) => t.id === m.taxonId)
+        ? existingTaxa
+        : [...existingTaxa, { id: m.taxonId, label: m.taxonLabel, rank: '', iconicTaxonName: m.taxonIconic }];
+      const head = newTaxa[0];
       updateSettings({
         iconicTaxa: ['all', ...ALL_GROUP_VALUES],
-        taxonId: m.taxonId,
-        taxonLabel: m.taxonLabel,
-        taxonIconicName: m.taxonIconic
+        taxa: newTaxa,
+        taxonId: head.id,
+        taxonLabel: head.label,
+        taxonIconicName: head.iconicTaxonName ?? null
       });
       return;
     }
     case 'confirm-apply-groups': {
-      // Usuário escolheu: aplicar mudança de grupos e remover o táxon.
+      // Usuário escolheu: aplicar mudança de grupos e remover o táxon
+      // CONFLITANTE (mantém os outros). m.taxonId identifica o que sai.
       const m = state.confirmModal;
       if (!m) return;
       state.confirmModal = null;
-      const normalized = m.newGroups.length === 0 ? ['all', ...ALL_GROUP_VALUES] : normalizeGroups(m.newGroups);
+      const normalized = m.newGroups.length === 0 ? [] : normalizeGroups(m.newGroups);
+      const existingTaxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+      const remainingTaxa = existingTaxa.filter((t) => t.id !== m.taxonId);
+      const head = remainingTaxa[0];
       updateSettings({
         iconicTaxa: normalized,
-        taxonId: null,
-        taxonLabel: null,
-        taxonIconicName: null
+        taxa: remainingTaxa,
+        taxonId: head ? head.id : null,
+        taxonLabel: head ? head.label : null,
+        taxonIconicName: head?.iconicTaxonName ?? null
       });
       return;
     }
+    case 'remove-taxon': {
+      const id = Number(target.dataset.id);
+      const taxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+      const next = taxa.filter((t) => t.id !== id);
+      const head = next[0];
+      updateSettings({
+        taxa: next,
+        taxonId: head ? head.id : null,
+        taxonLabel: head ? head.label : null,
+        taxonIconicName: head?.iconicTaxonName ?? null
+      });
+      return;
+    }
+    case 'remove-place': {
+      const id = Number(target.dataset.id);
+      const places = Array.isArray(state.settings.places) ? state.settings.places : [];
+      const next = places.filter((p) => p.id !== id);
+      const head = next[0];
+      updateSettings({
+        places: next,
+        placeId: head ? head.id : null,
+        placeLabel: head ? head.label : null
+      });
+      return;
+    }
+    // Aliases legados — algumas instalações ainda podem disparar essas ações
+    // se houver HTML cacheado. Comportamento: limpa TODA a lista (como o
+    // botão antigo de single-select fazia).
     case 'clear-taxon':
-      // Só remove se o clique foi no botão ✕ (evita remover ao clicar no chip)
       if (!event.target.closest('button')) return;
-      updateSettings({ taxonId: null, taxonLabel: null, taxonIconicName: null });
+      updateSettings({ taxa: [], taxonId: null, taxonLabel: null, taxonIconicName: null });
       return;
     case 'clear-place':
       if (!event.target.closest('button')) return;
-      updateSettings({ placeId: null, placeLabel: null });
+      updateSettings({ places: [], placeId: null, placeLabel: null });
       return;
     case 'quick-place': {
       const q = target.dataset.quick;
-      if (state.settings.placeLabel === q) {
-        updateSettings({ placeId: null, placeLabel: null });
+      const places = Array.isArray(state.settings.places) ? state.settings.places : [];
+      // Se já está na lista, REMOVE (toggle). Senão, busca + adiciona.
+      const existing = places.find((p) => p.label.toLowerCase().includes(q.toLowerCase()));
+      if (existing) {
+        const next = places.filter((p) => p.id !== existing.id);
+        const head = next[0];
+        updateSettings({
+          places: next,
+          placeId: head ? head.id : null,
+          placeLabel: head ? head.label : null
+        });
       } else {
-        // Dispara busca + auto-pick do primeiro resultado
         setPlaceQuery(q);
         await runPlaceSearch(q);
-        const first = (await import('./views/settings-view.js')).getSettingsLocal().placeResults[0];
-        if (first) updateSettings({ placeId: first.id, placeLabel: first.display_name || first.name });
-        else render();
+        const first = getSettingsLocal().placeResults[0];
+        if (first) {
+          const next = [...places, { id: first.id, label: first.display_name || first.name, rank: '' }];
+          updateSettings({
+            places: next,
+            placeId: next[0].id,
+            placeLabel: next[0].label
+          });
+        } else {
+          render();
+        }
       }
       return;
     }
     case 'quick-taxon': {
       const q = target.dataset.quick;
-      if (state.settings.taxonLabel === q) {
-        updateSettings({ taxonId: null, taxonLabel: null, taxonIconicName: null });
+      const taxa = Array.isArray(state.settings.taxa) ? state.settings.taxa : [];
+      // Se já está na lista, REMOVE (toggle). Senão, busca + adiciona (com
+      // checagem de conflito).
+      const existing = taxa.find((t) => t.label.toLowerCase() === q.toLowerCase() || (typeof t.label === 'string' && t.label.toLowerCase().includes(q.toLowerCase())));
+      if (existing) {
+        const next = taxa.filter((t) => t.id !== existing.id);
+        const head = next[0];
+        updateSettings({
+          taxa: next,
+          taxonId: head ? head.id : null,
+          taxonLabel: head ? head.label : null,
+          taxonIconicName: head?.iconicTaxonName ?? null
+        });
       } else {
         setTaxonQuery(q);
         await runTaxonSearch();
