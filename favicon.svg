@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Fundo escuro arredondado -->
+  <rect width="32" height="32" rx="7" fill="#0a120e"/>
+  <!-- Folha verde (mesma forma do logo no og-image) -->
+  <path d="M5 10 C7 6 15 4 21 8 C26 13 26 21 21 25 C16 28 9 25 5 19 C4 15 4 13 5 10 Z" fill="#2dd470"/>
+  <!-- Nervura central da folha -->
+  <path d="M6 11 C11 16 17 21 21 25" stroke="#0a120e" stroke-width="1.2" fill="none" opacity="0.45"/>
+</svg>
