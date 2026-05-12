@@ -17,6 +17,7 @@
 
 import { escapeHtml, formatDate } from '../format.js';
 import { POPULAR_NAME_BY_SCIENTIFIC } from '../quiz-engine.js';
+import { classifyQuizError } from '../error-messages.js';
 
 // ---------------------------------------------------------------------------
 // HELPERS DE DISPLAY
@@ -143,13 +144,25 @@ function loadingCard(hasPrefetch) {
   `;
 }
 
-function errorCard(error) {
+function errorCard(friendly) {
+  // `friendly` é o objeto devolvido por classifyQuizError({title, body,
+  // hints, icon}). Renderiza um cartão rico com sugestões acionáveis e dois
+  // botões (Ajustar filtros / Tentar novamente).
+  const isNoResults = (friendly.title || '').toLowerCase().includes('sem espécies');
+  const gradient = isNoResults
+    ? 'linear-gradient(135deg, var(--amber), #f59e0b)'
+    : 'linear-gradient(135deg, var(--err), #ef4444)';
+  const hints = (friendly.hints || []).map((h) => `<li>${escapeHtml(h)}</li>`).join('');
   return `
-    <div class="center-card">
-      <div class="icon-disc" aria-hidden="true" style="background: linear-gradient(135deg, var(--err), #ef4444);">⚠</div>
-      <h1>Não deu certo</h1>
-      <p>${escapeHtml(error || 'Não encontrei observações suficientes com esses filtros.')}</p>
-      <button type="button" class="btn btn-primary" data-action="advance" style="padding: 14px 28px;">Tentar novamente</button>
+    <div class="center-card error-card">
+      <div class="icon-disc" aria-hidden="true" style="background: ${gradient};">${escapeHtml(friendly.icon || '⚠')}</div>
+      <h1>${escapeHtml(friendly.title || 'Não deu certo')}</h1>
+      <p>${escapeHtml(friendly.body || '')}</p>
+      ${hints ? `<ul class="error-hints" aria-label="Sugestões">${hints}</ul>` : ''}
+      <div class="error-actions">
+        <button type="button" class="btn btn-secondary" data-action="set-mode" data-mode="config">Ajustar filtros</button>
+        <button type="button" class="btn btn-primary" data-action="advance">Tentar novamente</button>
+      </div>
     </div>
   `;
 }
@@ -327,7 +340,12 @@ export function renderGameScreen(state) {
 
   let content = '';
   if (loading) content = loadingCard(prefetchedCount > 0);
-  else if (error) content = errorCard(error);
+  else if (error) {
+    // Classifica o erro usando os settings atuais (taxonLabel, placeLabel...)
+    // para enriquecer a mensagem com o contexto real dos filtros.
+    const friendly = classifyQuizError(new Error(error), state.settings || {});
+    content = errorCard(friendly);
+  }
   else if (!question) content = startCard();
   else content = renderQuizStage(state);
 

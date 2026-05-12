@@ -31,8 +31,10 @@ import {
 import {
   renderSettingsView, runTaxonSearch, runPlaceSearch,
   setTaxonQuery, setPlaceQuery, normalizeGroups, toggleCbox,
-  setGeoQuickPlaces
+  setGeoQuickPlaces, detectIconicConflict, renderConfirmModal,
+  getSettingsLocal
 } from './views/settings-view.js';
+import { classifyQuizError } from './error-messages.js';
 import { renderDataView, getDataLocal, setDataLocal } from './views/data-view.js';
 
 // ---------------------------------------------------------------------------
@@ -67,7 +69,13 @@ const state = {
   generation: 0,              // incrementa a cada mudança de settings — invalida prefetches em vôo
   countdownCueSecond: null,   // último segundo em que o cue sonoro tocou
   detachImage: null,          // cleanup da interatividade de imagem
-  detachAnswerHeights: null   // cleanup do equalizador de altura
+  detachAnswerHeights: null,  // cleanup do equalizador de altura
+
+  // Modal de confirmação para conflitos entre grupos biológicos e o táxon
+  // escolhido. Quando setado, vira um overlay no render(). Estrutura:
+  //   { kind: 'adding-taxon', taxonId, taxonLabel, taxonSci, taxonIconic, previousGroups }
+  //   { kind: 'changing-groups', newGroups, taxonLabel, taxonSci, taxonIconic }
+  confirmModal: null
 };
 
 // inicializa a fila de prefetch a partir do cache persistente
@@ -150,6 +158,7 @@ function renderShell() {
         </button>
       </nav>
       ${state.infoModalOpen && state.question ? renderInfoModal(state.question) : ''}
+      ${state.confirmModal ? renderConfirmModal(state.confirmModal) : ''}
     </div>
   `;
 
@@ -465,21 +474,62 @@ function clearHistory() {
 }
 
 function toggleGroup(groupValue) {
+  // Calcula o novo conjunto SEM aplicar ainda — para checar conflito com
+  // o táxon atualmente selecionado.
+  let next;
   if (groupValue === 'all') {
-    updateSettings({ iconicTaxa: ['all', ...ALL_GROUP_VALUES] });
-    return;
+    next = ['all', ...ALL_GROUP_VALUES];
+  } else {
+    const selectedGroups = normalizeGroups(state.settings.iconicTaxa.length > 0 ? state.settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
+    const working = selectedGroups.filter((v) => v !== 'all');
+    next = working.includes(groupValue)
+      ? working.filter((v) => v !== groupValue)
+      : [...working, groupValue];
   }
-  const selectedGroups = normalizeGroups(state.settings.iconicTaxa.length > 0 ? state.settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
-  const working = selectedGroups.filter((v) => v !== 'all');
-  const next = working.includes(groupValue)
-    ? working.filter((v) => v !== groupValue)
-    : [...working, groupValue];
+  const candidate = next.length === 0 ? ['all', ...ALL_GROUP_VALUES] : normalizeGroups(next);
+
+  // Conflito: o táxon ativo é de um grupo que sumiu da seleção.
+  if (state.settings.taxonId && state.settings.taxonIconicName) {
+    const conflict = detectIconicConflict(state.settings.taxonIconicName, candidate);
+    if (conflict) {
+      state.confirmModal = {
+        kind: 'changing-groups',
+        newGroups: next,
+        taxonId: state.settings.taxonId,
+        taxonLabel: state.settings.taxonLabel,
+        taxonSci: state.settings.taxonLabel,
+        taxonIconic: state.settings.taxonIconicName
+      };
+      render();
+      return;
+    }
+  }
+
   if (next.length === 0) {
     updateSettings({ iconicTaxa: ['all', ...ALL_GROUP_VALUES] });
     return;
   }
-  const normalized = normalizeGroups(next);
-  updateSettings({ iconicTaxa: normalized.length === 0 ? ['all', ...ALL_GROUP_VALUES] : normalized });
+  updateSettings({ iconicTaxa: candidate });
+}
+
+/** Aplica um táxon selecionado, abrindo o modal de confirmação se houver
+ *  conflito com os grupos biológicos ativos. */
+function tryApplyTaxon({ id, label, sci, iconic }) {
+  const selectedGroups = normalizeGroups(state.settings.iconicTaxa.length > 0 ? state.settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
+  const conflict = detectIconicConflict(iconic, selectedGroups);
+  if (conflict) {
+    state.confirmModal = {
+      kind: 'adding-taxon',
+      taxonId: id,
+      taxonLabel: label,
+      taxonSci: sci,
+      taxonIconic: iconic,
+      previousGroups: [...selectedGroups]
+    };
+    render();
+    return;
+  }
+  updateSettings({ taxonId: id, taxonLabel: label, taxonIconicName: iconic });
 }
 
 // ---------------------------------------------------------------------------
@@ -547,22 +597,63 @@ document.addEventListener('click', async (event) => {
       return;
 
     // Multi-select de filtros (Locais / Táxons)
-    case 'pick-taxon':
-      updateSettings({
-        taxonId: Number(target.dataset.id),
-        taxonLabel: target.dataset.label
-      });
+    case 'pick-taxon': {
+      const id = Number(target.dataset.id);
+      const label = target.dataset.label;
+      const iconic = target.dataset.iconic || null;
+      tryApplyTaxon({ id, label, sci: target.dataset.extra ?? label, iconic });
       return;
+    }
     case 'pick-place':
       updateSettings({
         placeId: Number(target.dataset.id),
         placeLabel: target.dataset.label
       });
       return;
+
+    // Modal de conflito — confirmar/cancelar
+    case 'confirm-close':
+      // Só fecha se o clique foi no backdrop ou no botão Cancelar/Fechar
+      // (evita fechar ao clicar dentro do <section.modal>).
+      if (event.target.closest('.modal-backdrop') &&
+          (event.target.classList.contains('modal-backdrop') ||
+           event.target.closest('[data-action="confirm-close"]'))) {
+        state.confirmModal = null;
+        render();
+      }
+      return;
+    case 'confirm-apply-taxon': {
+      // Usuário escolheu: aplicar o táxon e trocar grupos para Todos.
+      const m = state.confirmModal;
+      if (!m) return;
+      state.confirmModal = null;
+      // Aplica os dois em uma única atualização para não rodar dois renders.
+      updateSettings({
+        iconicTaxa: ['all', ...ALL_GROUP_VALUES],
+        taxonId: m.taxonId,
+        taxonLabel: m.taxonLabel,
+        taxonIconicName: m.taxonIconic
+      });
+      return;
+    }
+    case 'confirm-apply-groups': {
+      // Usuário escolheu: aplicar mudança de grupos e remover o táxon.
+      const m = state.confirmModal;
+      if (!m) return;
+      state.confirmModal = null;
+      const normalized = m.newGroups.length === 0 ? ['all', ...ALL_GROUP_VALUES] : normalizeGroups(m.newGroups);
+      updateSettings({
+        iconicTaxa: normalized,
+        taxonId: null,
+        taxonLabel: null,
+        taxonIconicName: null
+      });
+      return;
+    }
     case 'clear-taxon':
       // Só remove se o clique foi no botão ✕ (evita remover ao clicar no chip)
       if (!event.target.closest('button')) return;
-      updateSettings({ taxonId: null, taxonLabel: null });
+      updateSettings({ taxonId: null, taxonLabel: null, taxonIconicName: null });
       return;
     case 'clear-place':
       if (!event.target.closest('button')) return;
@@ -585,13 +676,21 @@ document.addEventListener('click', async (event) => {
     case 'quick-taxon': {
       const q = target.dataset.quick;
       if (state.settings.taxonLabel === q) {
-        updateSettings({ taxonId: null, taxonLabel: null });
+        updateSettings({ taxonId: null, taxonLabel: null, taxonIconicName: null });
       } else {
         setTaxonQuery(q);
         await runTaxonSearch();
-        const first = (await import('./views/settings-view.js')).getSettingsLocal().taxaResults[0];
-        if (first) updateSettings({ taxonId: first.id, taxonLabel: first.preferred_common_name ?? first.name });
-        else render();
+        const first = getSettingsLocal().taxaResults[0];
+        if (first) {
+          tryApplyTaxon({
+            id: first.id,
+            label: first.preferred_common_name ?? first.name,
+            sci: first.name,
+            iconic: first.iconic_taxon_name ?? null
+          });
+        } else {
+          render();
+        }
       }
       return;
     }

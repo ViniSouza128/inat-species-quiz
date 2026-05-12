@@ -31,6 +31,9 @@ export const DEFAULT_SETTINGS = {
   iconicTaxa: ['Aves'],
   taxonId: null,
   taxonLabel: null,
+  // iconic_taxon_name do táxon selecionado — usado para detectar conflito
+  // com `iconicTaxa` (ex.: Aves + taxon Formicidae = sem resultados).
+  taxonIconicName: null,
   placeId: null,
   placeLabel: null,
   difficulty: 'normal',

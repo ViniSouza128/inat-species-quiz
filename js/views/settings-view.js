@@ -83,13 +83,38 @@ const local = {
   taxaResults: [],
   placeResults: [],
   searchError: null,
-  // Estado dos boxes colapsáveis. Grupos abre por default.
-  cbox: { groups: true, difficulty: false, filters: false, appearance: false, sound: false }
+  // Estado dos boxes colapsáveis. Grupos foram movidos PARA DENTRO do cbox
+  // `filters` — então é ele que abre por default agora.
+  cbox: { difficulty: false, filters: true, appearance: false, sound: false }
 };
 
 export function getSettingsLocal() { return local; }
 export function toggleCbox(id) {
   if (id in local.cbox) local.cbox[id] = !local.cbox[id];
+}
+
+/** Tradução PT-BR para os grupos iconic — usada nos textos do modal de
+ *  conflito quando o táxon escolhido cair fora dos grupos selecionados. */
+export const GROUP_LABEL = {
+  Aves: 'Aves',
+  Mammalia: 'Mamíferos',
+  Reptilia: 'Répteis',
+  Amphibia: 'Anfíbios',
+  Actinopterygii: 'Peixes',
+  Insecta: 'Insetos',
+  Arachnida: 'Aracnídeos',
+  Plantae: 'Plantas',
+  Fungi: 'Fungos'
+};
+
+/** Detecta conflito entre o iconic_taxon_name de um táxon e os grupos
+ *  biológicos selecionados. Retorna null se não houver. */
+export function detectIconicConflict(taxonIconic, selectedGroups) {
+  if (!taxonIconic) return null;
+  if (selectedGroups.includes('all')) return null;
+  if (!ALL_GROUP_VALUES.includes(taxonIconic)) return null;
+  if (selectedGroups.includes(taxonIconic)) return null;
+  return { taxonIconic };
 }
 
 // ---------------------------------------------------------------------------
@@ -107,9 +132,8 @@ export function renderSettingsView(settings, loading) {
       </header>
 
       <div class="config-stack">
-        ${renderGroupsBox(selectedGroups)}
         ${renderDifficultyBox(settings)}
-        ${renderFiltersBox(settings)}
+        ${renderFiltersBox(settings, selectedGroups)}
         ${renderAppearanceBox(settings)}
         ${renderSoundBox(settings)}
 
@@ -143,10 +167,10 @@ function cboxHeader(id, glyph, title, desc, summary) {
   `;
 }
 
-// 1) GRUPOS BIOLÓGICOS -------------------------------------------------------
+// 1) GRUPOS BIOLÓGICOS — chips renderizados DENTRO do cbox Filtros ---------
 
-function renderGroupsBox(selectedGroups) {
-  const chips = groupItems.map((g) => {
+function renderGroupChips(selectedGroups) {
+  return groupItems.map((g) => {
     const isActive = g.value === 'all' ? selectedGroups.includes('all') : selectedGroups.includes(g.value);
     return `
       <button type="button" class="chip ${isActive ? 'is-active' : ''}" data-action="toggle-group" data-group="${g.value}">
@@ -155,18 +179,6 @@ function renderGroupsBox(selectedGroups) {
       </button>
     `;
   }).join('');
-
-  const activeCount = selectedGroups.filter((v) => v !== 'all').length;
-  const summary = `${activeCount} ativos`;
-
-  return `
-    <article class="cbox" data-open="${local.cbox.groups}">
-      ${cboxHeader('groups', '🌿', 'Grupos biológicos', 'Quais reinos/classes podem aparecer no quiz', summary)}
-      <div class="cbox-body">
-        <div class="group-chips">${chips}</div>
-      </div>
-    </article>
-  `;
 }
 
 // 2) DIFICULDADE -------------------------------------------------------------
@@ -222,7 +234,7 @@ function filterSubGroup(opts) {
   const resultsHtml = results && results.length > 0
     ? `<div class="result-list-inline">
          ${results.map((r) => `
-           <button type="button" data-action="${pickAction}" data-id="${r.id}" data-label="${escapeHtml(r.label)}" ${r.extra ? `data-extra="${escapeHtml(r.extra)}"` : ''}>
+           <button type="button" data-action="${pickAction}" data-id="${r.id}" data-label="${escapeHtml(r.label)}" ${r.extra ? `data-extra="${escapeHtml(r.extra)}"` : ''} ${r.iconic ? `data-iconic="${escapeHtml(r.iconic)}"` : ''}>
              <span class="add-glyph" aria-hidden="true">+</span>
              <strong>${escapeHtml(r.label)}${r.extra ? ` <em style="font-style: normal; color: var(--text-faint); font-weight: 500;">· ${escapeHtml(r.extra)}</em>` : ''}</strong>
            </button>
@@ -250,23 +262,39 @@ function filterSubGroup(opts) {
   `;
 }
 
-function renderFiltersBox(settings) {
+function renderFiltersBox(settings, selectedGroups) {
   const placeTag = settings.placeId ? { label: settings.placeLabel ?? `Local ${settings.placeId}`, meta: 'local' } : null;
   const taxonTag = settings.taxonId ? { label: settings.taxonLabel ?? `Táxon ${settings.taxonId}`, meta: 'táxon' } : null;
-  const count = (placeTag ? 1 : 0) + (taxonTag ? 1 : 0);
-  const summary = count === 0 ? 'nenhum' : `${count} ${count === 1 ? 'filtro' : 'filtros'}`;
+  const filtersCount = (placeTag ? 1 : 0) + (taxonTag ? 1 : 0);
+  const activeGroups = selectedGroups.filter((v) => v !== 'all').length;
+  const totalGroups = ALL_GROUP_VALUES.length;
+  const groupsPart = activeGroups === totalGroups ? 'todos grupos' : `${activeGroups} grupos`;
+  const summary = filtersCount === 0 ? groupsPart : `${groupsPart} · ${filtersCount} ${filtersCount === 1 ? 'filtro' : 'filtros'}`;
 
   const placesResults = local.placeResults.map((p) => ({
     id: p.id, label: p.name || p.display_name, extra: p.display_name && p.display_name !== p.name ? p.display_name : null
   }));
+  // O `iconic` é enviado como data-attribute no botão. main.js usa esse valor
+  // para detectar conflito com `iconicTaxa` e abrir o modal de confirmação.
   const taxaResults = local.taxaResults.map((t) => ({
-    id: t.id, label: t.preferred_common_name ?? t.name, extra: t.preferred_common_name ? `${t.name} · ${t.rank ?? 'rank n/d'}` : (t.rank ?? null)
+    id: t.id,
+    label: t.preferred_common_name ?? t.name,
+    extra: t.preferred_common_name ? `${t.name} · ${t.rank ?? 'rank n/d'}` : (t.rank ?? null),
+    iconic: t.iconic_taxon_name ?? null
   }));
 
   return `
     <article class="cbox" data-open="${local.cbox.filters}">
-      ${cboxHeader('filters', '🔍', 'Filtros', 'Restringir a locais ou táxons específicos', summary)}
+      ${cboxHeader('filters', '🔍', 'Filtros', 'Grupos biológicos, locais e táxons que entram no quiz', summary)}
       <div class="cbox-body">
+        <div class="filter-group">
+          <header class="filter-group-head">
+            <span class="glyph" aria-hidden="true">🌿</span>
+            <strong>Grupos biológicos</strong>
+            <span class="count">${activeGroups === totalGroups ? 'todos' : activeGroups}</span>
+          </header>
+          <div class="group-chips">${renderGroupChips(selectedGroups)}</div>
+        </div>
         ${filterSubGroup({
           glyph: '📍', title: 'Locais', count: placeTag ? 1 : 0,
           searchPlaceholder: 'Buscar local — ex: Brasil, Pantanal',
@@ -326,6 +354,65 @@ function renderSoundBox(settings) {
         </div>
       </div>
     </article>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// MODAL de CONFIRMAÇÃO — usado para conflitos entre grupos biológicos e
+// o táxon escolhido. Renderizado por main.js quando state.confirmModal
+// estiver setado. Não auto-corrige nada; deixa o usuário decidir.
+// ---------------------------------------------------------------------------
+
+export function renderConfirmModal(modal) {
+  if (!modal) return '';
+  const groupName = GROUP_LABEL[modal.taxonIconic] ?? modal.taxonIconic ?? '?';
+
+  let body = '';
+  let primaryLabel = '';
+  let primaryAction = '';
+  let hints = '';
+
+  // Mostra o nome científico em parênteses só se for diferente do label.
+  const sciPart = (modal.taxonSci && modal.taxonSci !== modal.taxonLabel)
+    ? ` (<em>${escapeHtml(modal.taxonSci)}</em>)`
+    : '';
+
+  if (modal.kind === 'adding-taxon') {
+    const selected = (modal.previousGroups || [])
+      .filter((g) => g !== 'all')
+      .map((g) => GROUP_LABEL[g] ?? g)
+      .join(', ') || 'nenhum';
+    body = `<strong>${escapeHtml(modal.taxonLabel)}</strong>${sciPart} é do grupo <em>${escapeHtml(groupName)}</em>, mas você marcou apenas <em>${escapeHtml(selected)}</em> nos grupos biológicos. Sem ajuste, nenhuma observação vai bater.`;
+    primaryLabel = `Trocar grupos para Todos e aplicar ${escapeHtml(modal.taxonLabel)}`;
+    primaryAction = 'confirm-apply-taxon';
+    hints = '<li>Você pode cancelar a adição do táxon, ou trocar os grupos para “Todos” e manter o táxon.</li>';
+  } else if (modal.kind === 'changing-groups') {
+    body = `Você está removendo o grupo <em>${escapeHtml(groupName)}</em>, mas o táxon <strong>${escapeHtml(modal.taxonLabel)}</strong>${sciPart} que está nos filtros pertence a esse grupo. Sem ele, o táxon não traz resultados.`;
+    primaryLabel = `Aplicar mudança e remover ${escapeHtml(modal.taxonLabel)}`;
+    primaryAction = 'confirm-apply-groups';
+    hints = '<li>Você pode cancelar para manter o grupo, ou aplicar a mudança removendo o táxon.</li>';
+  }
+
+  return `
+    <div class="modal-backdrop" role="presentation" data-action="confirm-close">
+      <section class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <header class="modal-head">
+          <div class="confirm-head">
+            <span class="confirm-disc" aria-hidden="true">⚠</span>
+            <h2 id="confirm-title">Conflito entre filtros</h2>
+          </div>
+          <button type="button" class="btn btn-ghost" data-action="confirm-close" aria-label="Fechar">Fechar ✕</button>
+        </header>
+        <div class="modal-body confirm-body">
+          <p>${body}</p>
+          <ul class="confirm-hints">${hints}</ul>
+        </div>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn-primary" data-action="${primaryAction}">${primaryLabel}</button>
+          <button type="button" class="btn btn-ghost" data-action="confirm-close">Cancelar</button>
+        </footer>
+      </section>
+    </div>
   `;
 }
 
