@@ -1,11 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <!-- Fundo escuro arredondado -->
   <rect width="32" height="32" rx="7" fill="#0a120e"/>
-  <!-- Folha lanceolada (forma de lanca), diagonal SW->NE -->
-  <path d="M 9 24 C 6 17, 11 7, 26 6 C 26 21, 16 27, 9 24 Z" fill="#2dd470"/>
-  <!-- Nervura central, curva sutil seguindo o eixo da folha -->
-  <path d="M 9 24 Q 14 13, 26 6" stroke="#0b4a2a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-  <!-- 2 nervuras laterais finas (so visiveis em tamanhos maiores) -->
-  <path d="M 12 19 Q 15 19, 17 17" stroke="#0b4a2a" stroke-width="0.6" fill="none" stroke-linecap="round"/>
-  <path d="M 17 12 Q 20 12, 22 10" stroke="#0b4a2a" stroke-width="0.6" fill="none" stroke-linecap="round"/>
+  <!-- Peciolo (cabinho da folha) -->
+  <path d="M 5 27 L 9 23" stroke="#1a8d4a" stroke-width="1.6" stroke-linecap="round"/>
+  <!-- Folha: base arredondada (SW), ponta afilada (NE) -->
+  <path d="M 9 23 C 5 18, 11 6, 25 5 C 26 14, 17 23, 9 23 Z" fill="#2dd470"/>
+  <!-- Metade superior em verde mais claro, dando profundidade (gradiente "natural") -->
+  <path d="M 9 23 C 5 18, 11 6, 25 5 Q 17 9, 9 23 Z" fill="#5be095"/>
+  <!-- Nervura central, curva seguindo o eixo da folha -->
+  <path d="M 9 23 Q 13 14, 25 5" stroke="#0d4422" stroke-width="1.1" fill="none" stroke-linecap="round"/>
 </svg>

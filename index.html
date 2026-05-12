@@ -30,10 +30,15 @@
     <meta property="og:type"        content="website" />
     <meta property="og:title"       content="iNat Species Quiz" />
     <meta property="og:description" content="Quiz para identificar espécies de fotos reais do iNaturalist. 4 níveis de dificuldade, filtros por grupo taxonômico e localidade." />
-    <meta property="og:image"       content="https://vinisouza128.github.io/inat-species-quiz/og-image.svg" />
+    <!-- og:image em PNG porque WhatsApp/Slack/LinkedIn nao renderizam SVG aqui.
+         A versao SVG fica como fallback (og:image:secure_url para clientes modernos). -->
+    <meta property="og:image"       content="https://vinisouza128.github.io/inat-species-quiz/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type"  content="image/png" />
     <meta property="og:url"         content="https://vinisouza128.github.io/inat-species-quiz/" />
     <meta name="twitter:card"       content="summary_large_image" />
-    <meta name="twitter:image"      content="https://vinisouza128.github.io/inat-species-quiz/og-image.svg" />
+    <meta name="twitter:image"      content="https://vinisouza128.github.io/inat-species-quiz/og-image.png" />
 
     <!-- Fontes: Inter (UI), Fraunces (títulos/serif), JetBrains Mono (números). -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />

@@ -14,7 +14,7 @@
 // O SW antigo sera substituido na proxima visita (e os caches antigos apagados).
 // =============================================================================
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const SHELL_CACHE  = `inat-quiz-shell-${CACHE_VERSION}`;
 const PHOTOS_CACHE = `inat-quiz-photos-${CACHE_VERSION}`;
 const FONTS_CACHE  = `inat-quiz-fonts-${CACHE_VERSION}`;
