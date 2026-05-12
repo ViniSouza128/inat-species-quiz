@@ -401,7 +401,12 @@ function buildObservationParams(input, relaxed = false) {
 async function fetchCandidateObservations(input) {
   const primary = await getObservations(buildObservationParams(input, false));
   let observations = primary.results ?? [];
-  if (observations.filter((obs) => isValidObservation(obs, input.rank)).length < input.choices) {
+
+  const hasLocationFilter =
+    (Array.isArray(input.placeIds) && input.placeIds.length > 0) ||
+    input.lat !== undefined;
+
+  if (!hasLocationFilter && observations.filter((obs) => isValidObservation(obs, input.rank)).length < input.choices) {
     const relaxed = await getObservations(buildObservationParams(input, true));
     observations = [...observations, ...(relaxed.results ?? [])];
   }
