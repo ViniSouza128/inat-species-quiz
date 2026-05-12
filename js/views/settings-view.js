@@ -53,8 +53,19 @@ const difficultyInfo = {
   ]}
 };
 
-const quickPlaces = ['Brasil', 'Pantanal', 'Amazônia', 'Cerrado', 'Mata Atlântica'];
-const quickTaxa = ['Felidae', 'Orchidaceae', 'Coleoptera', 'Anura'];
+// Fallback usado quando a geolocalização por IP não retornar nada.
+const FALLBACK_QUICK_PLACES = ['Brasil', 'Pantanal', 'Amazônia', 'Cerrado', 'Mata Atlântica'];
+const quickTaxa = ['Salticidae', 'Formicidae', 'Plantae', 'Felidae', 'Orchidaceae', 'Coleoptera', 'Anura'];
+
+// Lista efetiva de atalhos de Locais. O bootstrap em main.js chama
+// `setGeoQuickPlaces` quando a busca por IP resolver — aí prefixamos com
+// cidade/UF do usuário antes do fallback.
+let quickPlaces = [...FALLBACK_QUICK_PLACES];
+export function setGeoQuickPlaces(values) {
+  const dedup = [];
+  for (const v of values) if (v && !dedup.includes(v)) dedup.push(v);
+  quickPlaces = dedup.length > 0 ? dedup : [...FALLBACK_QUICK_PLACES];
+}
 
 function normalizeGroups(values) {
   const onlyActual = ALL_GROUP_VALUES.filter((v) => values.includes(v));
@@ -168,6 +179,13 @@ function renderDifficultyBox(settings) {
     return `<button type="button" class="${active}" data-action="set-difficulty" data-difficulty="${d}">${label}</button>`;
   }).join('');
 
+  // O modo de exibição agora é determinado pela dificuldade — Especialista
+  // mostra só o nome científico; os demais incluem o nome popular.
+  const onlySci = settings.difficulty === 'expert';
+  const namingNote = onlySci
+    ? 'Modo Especialista: só nomes <em>científicos</em> nas alternativas.'
+    : 'Nomes populares exibidos quando disponíveis.';
+
   return `
     <article class="cbox" data-open="${local.cbox.difficulty}">
       ${cboxHeader('difficulty', '🎯', 'Dificuldade', 'Tempo, pontuação e tipo de distratores', current.summary)}
@@ -176,21 +194,7 @@ function renderDifficultyBox(settings) {
         <div class="difficulty-detail">
           <strong>${escapeHtml(current.title)}</strong>
           <ul>${current.bullets.map((b) => `<li>${b}</li>`).join('')}</ul>
-        </div>
-
-        <div class="toggle ${settings.showPopularName !== false ? 'is-on' : ''}" data-action="toggle-popular">
-          <div class="text">
-            <strong>Mostrar nome popular</strong>
-            <small>Exibe o nome em PT-BR quando disponível. Recomendado para Fácil/Normal.</small>
-          </div>
-          <span class="switch"></span>
-        </div>
-        <div class="toggle ${settings.scientificOnly ? 'is-on' : ''}" data-action="toggle-scientific-only">
-          <div class="text">
-            <strong>Só nomes científicos</strong>
-            <small>Modo especialista — esconde nomes populares. Combina com Difícil/Especialista.</small>
-          </div>
-          <span class="switch"></span>
+          <p class="naming-note">${namingNote}</p>
         </div>
       </div>
     </article>
@@ -219,8 +223,8 @@ function filterSubGroup(opts) {
     ? `<div class="result-list-inline">
          ${results.map((r) => `
            <button type="button" data-action="${pickAction}" data-id="${r.id}" data-label="${escapeHtml(r.label)}" ${r.extra ? `data-extra="${escapeHtml(r.extra)}"` : ''}>
-             <strong>${escapeHtml(r.label)}${r.extra ? ` <em style="font-style: normal; color: var(--text-faint); font-weight: 500;">· ${escapeHtml(r.extra)}</em>` : ''}</strong>
              <span class="add-glyph" aria-hidden="true">+</span>
+             <strong>${escapeHtml(r.label)}${r.extra ? ` <em style="font-style: normal; color: var(--text-faint); font-weight: 500;">· ${escapeHtml(r.extra)}</em>` : ''}</strong>
            </button>
          `).join('')}
        </div>`

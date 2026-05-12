@@ -30,7 +30,8 @@ import {
 } from './views/quiz-view.js';
 import {
   renderSettingsView, runTaxonSearch, runPlaceSearch,
-  setTaxonQuery, setPlaceQuery, normalizeGroups, toggleCbox
+  setTaxonQuery, setPlaceQuery, normalizeGroups, toggleCbox,
+  setGeoQuickPlaces
 } from './views/settings-view.js';
 import { renderDataView, getDataLocal, setDataLocal } from './views/data-view.js';
 
@@ -168,7 +169,44 @@ function renderShell() {
 
 // Render (com debounce simples para evitar reflow consecutivo). Nem todos
 // os caminhos chamam — eventos de timer fazem múltiplos rerenders por seg.
-function render() { renderShell(); }
+//
+// Antes de chamar `renderShell()` (que substitui todo o #root.innerHTML e,
+// portanto, recria os elementos com scrollTop=0 e perde o foco), capturamos:
+//   • scrollTop do contêiner rolável visível (`.config-screen` / `.data-screen`)
+//   • elemento focado (input de busca) + posição do caret
+// Depois do render, restauramos. Isso impede a "tela pular pra cima" ao
+// pesquisar um filtro de táxon/local na tela de Configurações.
+function preservedScrollState() {
+  const screen = root.querySelector('.config-screen, .data-screen');
+  const active = document.activeElement;
+  const activeInput = active && active.tagName === 'INPUT' && root.contains(active) ? active : null;
+  return {
+    scrollTop: screen ? screen.scrollTop : 0,
+    inputSelector: activeInput?.dataset?.input ? `[data-input="${activeInput.dataset.input}"]` : null,
+    selectionStart: activeInput && typeof activeInput.selectionStart === 'number' ? activeInput.selectionStart : null,
+    selectionEnd: activeInput && typeof activeInput.selectionEnd === 'number' ? activeInput.selectionEnd : null
+  };
+}
+function restoreScrollState(saved) {
+  const screen = root.querySelector('.config-screen, .data-screen');
+  if (screen && saved.scrollTop > 0) screen.scrollTop = saved.scrollTop;
+  if (saved.inputSelector) {
+    const input = root.querySelector(saved.inputSelector);
+    if (input && input instanceof HTMLInputElement) {
+      // `preventScroll: true` evita que o foco arraste o contêiner rolável para
+      // posicionar o input — é justamente o "page up" que a gente quer evitar.
+      try { input.focus({ preventScroll: true }); } catch { input.focus(); }
+      if (saved.selectionStart !== null && saved.selectionEnd !== null) {
+        try { input.setSelectionRange(saved.selectionStart, saved.selectionEnd); } catch { /* ignore */ }
+      }
+    }
+  }
+}
+function render() {
+  const saved = preservedScrollState();
+  renderShell();
+  restoreScrollState(saved);
+}
 
 // ---------------------------------------------------------------------------
 // PREFETCH QUEUE — preenche a fila em paralelo até PREFETCH_TARGET
@@ -395,6 +433,10 @@ function applySettingsTheme() {
 
 function updateSettings(partial) {
   const next = { ...state.settings, ...partial, choices: 4 };
+  // O modo de exibição agora deriva da dificuldade — Especialista esconde o
+  // nome popular. Mantemos `scientificOnly` em sincronia para que o resto do
+  // código (quiz-view.js, history) continue lendo o mesmo campo.
+  next.scientificOnly = next.difficulty === 'expert';
   state.settings = next;
   saveSettings(next);
   applySettingsTheme();
@@ -581,13 +623,7 @@ document.addEventListener('click', async (event) => {
       return;
     }
 
-    // Toggles (popular / scientific-only)
-    case 'toggle-popular':
-      updateSettings({ showPopularName: !(state.settings.showPopularName !== false) });
-      return;
-    case 'toggle-scientific-only':
-      updateSettings({ scientificOnly: !state.settings.scientificOnly });
-      return;
+    // (toggles popular / scientific-only removidos — agora derivam da dificuldade)
 
     case 'reset-stats': {
       const ok = window.confirm('Zerar estatísticas e pontuação atuais?');
@@ -739,5 +775,58 @@ document.addEventListener('keydown', (event) => {
 
 // renderShell já normaliza buttons sem type após cada innerHTML.
 applySettingsTheme();
+
+// Sincroniza `scientificOnly` com a dificuldade na inicialização. Cobre o caso
+// de quem tinha o toggle desligado/ligado salvo de uma versão anterior.
+{
+  const expected = state.settings.difficulty === 'expert';
+  if (state.settings.scientificOnly !== expected) {
+    state.settings = { ...state.settings, scientificOnly: expected };
+    saveSettings(state.settings);
+  }
+}
+
 render();
 void fillPrefetchQueue();
+
+// Geolocalização por IP — atualiza os atalhos de Locais quando o provedor
+// resolver a cidade/UF. Falha silenciosa: o usuário continua vendo a lista
+// padrão (Brasil, Pantanal, Amazônia, Cerrado, Mata Atlântica).
+const IP_GEO_KEY = 'inatQuiz.ipGeo.v1';
+async function bootstrapIpGeo() {
+  let geo = null;
+  try {
+    const cached = sessionStorage.getItem(IP_GEO_KEY);
+    if (cached) geo = JSON.parse(cached);
+  } catch { /* ignore */ }
+
+  if (!geo) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    try {
+      const resp = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+      if (resp.ok) {
+        const data = await resp.json();
+        geo = {
+          city: typeof data.city === 'string' && data.city.length > 0 ? data.city : null,
+          region: typeof data.region === 'string' && data.region.length > 0 ? data.region : null
+        };
+        try { sessionStorage.setItem(IP_GEO_KEY, JSON.stringify(geo)); } catch { /* ignore */ }
+      }
+    } catch { /* fallback */ } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  if (!geo) return;
+  const local = [];
+  if (geo.city) local.push(geo.city);
+  if (geo.region && geo.region !== geo.city) local.push(geo.region);
+  if (local.length === 0) return;
+  // Mistura: cidade/UF primeiro, depois os atalhos pré-definidos.
+  setGeoQuickPlaces([...local, 'Brasil', 'Pantanal', 'Amazônia', 'Cerrado', 'Mata Atlântica']);
+  // Só rerenderiza se o usuário já estiver na tela de configurações — em outras
+  // telas, basta atualizar quando ele entrar (a próxima `render()` pega).
+  if (state.mode === 'config') render();
+}
+void bootstrapIpGeo();

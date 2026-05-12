@@ -1573,6 +1573,20 @@ img { display: block; max-width: 100%; }
   display: grid;
   gap: 4px;
 }
+/* Pequena nota sobre nome popular vs científico — substitui os toggles
+   antigos. O texto muda conforme a dificuldade (só Especialista esconde o
+   popular). */
+.difficulty-detail .naming-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+.difficulty-detail .naming-note em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--text-muted);
+}
 
 /* Toggle (switch + texto) */
 .toggle {
@@ -1754,7 +1768,8 @@ img { display: block; max-width: 100%; }
 }
 .result-list-inline button {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  /* + (add-glyph) à esquerda, nome (1fr) no meio, rank (opcional) à direita. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--sp-3);
   text-align: left;
