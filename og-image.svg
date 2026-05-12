@@ -94,9 +94,16 @@
 
   <!-- ── RIGHT PANEL ── -->
 
-  <!-- Leaf logo icon -->
-  <path d="M720 50 C727 33 759 26 783 44 C805 62 802 96 782 110 C763 123 735 111 721 85 C715 72 715 61 720 50 Z" fill="#2dd470"/>
-  <path d="M722 54 C742 73 766 95 781 109" stroke="#0a120e" stroke-width="1.5" fill="none" opacity="0.4"/>
+  <!-- Leaf logo (mesmo desenho do favicon.svg, escalado para a regiao 90x90 centrada em (760, 75)) -->
+  <g transform="translate(715 30) scale(2.8125)">
+    <!-- Folha lanceolada, diagonal SW->NE -->
+    <path d="M 9 24 C 6 17, 11 7, 26 6 C 26 21, 16 27, 9 24 Z" fill="#2dd470"/>
+    <!-- Nervura central -->
+    <path d="M 9 24 Q 14 13, 26 6" stroke="#0b4a2a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+    <!-- Nervuras laterais finas -->
+    <path d="M 12 19 Q 15 19, 17 17" stroke="#0b4a2a" stroke-width="0.6" fill="none" stroke-linecap="round"/>
+    <path d="M 17 12 Q 20 12, 22 10" stroke="#0b4a2a" stroke-width="0.6" fill="none" stroke-linecap="round"/>
+  </g>
 
   <!-- App title -->
   <text x="804" y="92" fill="#ecf3ec"
