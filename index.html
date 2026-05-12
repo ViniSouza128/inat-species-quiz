@@ -44,6 +44,15 @@
     />
 
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+    <!-- PWA: manifest + icones para "adicionar a tela inicial" / instalar como app -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="iNat Quiz" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -51,5 +60,8 @@
     <div id="root"></div>
     <!-- ES Modules: cada arquivo importa explicitamente o que precisa. -->
     <script type="module" src="js/main.js"></script>
+    <!-- PWA: registra o service worker (offline + instalavel). Carregado em separado
+         para que falhas em main.js nao impecam a instalacao do app. -->
+    <script type="module" src="js/pwa.js"></script>
   </body>
 </html>
