@@ -201,7 +201,7 @@ function renderChoices(state) {
   const { question, settings, answered, answering, selectedTaxonId, answerResult, hintLevel } = state;
   const mode = answered ? 'answered' : hintLevel >= 2 ? 'hint2' : hintLevel >= 1 ? 'hint1' : 'plain';
 
-  const choicesHtml = question.choices.slice(0, 4).map((choice) => {
+  const choicesHtml = question.choices.slice(0, 4).map((choice, index) => {
     const isSelected = selectedTaxonId === choice.taxonId;
     const isCorrect = answered && choice.taxonId === answerResult?.correctTaxonId;
     const isWrong = answered && isSelected && !isCorrect;
@@ -229,6 +229,12 @@ function renderChoices(state) {
         ${hintLevel >= 2 ? `<span class="hint-val">${escapeHtml(choice.orderScientificName ?? '—')}</span>` : ''}
       </span>` : '';
 
+    // Badge "1"/"2"/"3"/"4" — visível só em desktop (CSS .kbd-hint tem
+    // display: none em mobile). Some quando o usuário já respondeu.
+    const kbdHint = answered
+      ? ''
+      : `<span class="kbd-hint kbd-num" aria-hidden="true">${index + 1}</span>`;
+
     let status = '';
     if (isCorrect) status = '<span class="status status-ok" aria-label="Resposta correta">✓</span>';
     else if (isWrong) status = '<span class="status status-err" aria-label="Sua escolha (errada)">✕</span>';
@@ -242,6 +248,7 @@ function renderChoices(state) {
         </span>
         ${hintLabels}
         ${hintValues}
+        ${kbdHint}
         ${status}
       </button>
     `;

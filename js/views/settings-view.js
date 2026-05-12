@@ -83,9 +83,9 @@ const local = {
   taxaResults: [],
   placeResults: [],
   searchError: null,
-  // Estado dos boxes colapsáveis. Grupos foram movidos PARA DENTRO do cbox
-  // `filters` — então é ele que abre por default agora.
-  cbox: { difficulty: false, filters: true, appearance: false, sound: false }
+  // Estado dos boxes colapsáveis. Tudo COLAPSADO por default — o usuário
+  // expande só o que precisa, em vez de ver um paredão na abertura.
+  cbox: { difficulty: false, filters: false, appearance: false, sound: false }
 };
 
 export function getSettingsLocal() { return local; }
@@ -122,7 +122,8 @@ export function detectIconicConflict(taxonIconic, selectedGroups) {
 // ---------------------------------------------------------------------------
 
 export function renderSettingsView(settings, loading) {
-  const selectedGroups = normalizeGroups(settings.iconicTaxa.length > 0 ? settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
+  // Vazio é estado válido (bloqueia quiz com mensagem) — não auto-restaura.
+  const selectedGroups = normalizeGroups(settings.iconicTaxa);
 
   return `
     <section class="config-screen" aria-label="Configurações do quiz" data-scroll>
@@ -268,7 +269,10 @@ function renderFiltersBox(settings, selectedGroups) {
   const filtersCount = (placeTag ? 1 : 0) + (taxonTag ? 1 : 0);
   const activeGroups = selectedGroups.filter((v) => v !== 'all').length;
   const totalGroups = ALL_GROUP_VALUES.length;
-  const groupsPart = activeGroups === totalGroups ? 'todos grupos' : `${activeGroups} grupos`;
+  let groupsPart;
+  if (activeGroups === 0) groupsPart = 'sem grupos';
+  else if (activeGroups === totalGroups) groupsPart = 'todos grupos';
+  else groupsPart = `${activeGroups} grupos`;
   const summary = filtersCount === 0 ? groupsPart : `${groupsPart} · ${filtersCount} ${filtersCount === 1 ? 'filtro' : 'filtros'}`;
 
   const placesResults = local.placeResults.map((p) => ({
@@ -291,7 +295,7 @@ function renderFiltersBox(settings, selectedGroups) {
           <header class="filter-group-head">
             <span class="glyph" aria-hidden="true">🌿</span>
             <strong>Grupos biológicos</strong>
-            <span class="count">${activeGroups === totalGroups ? 'todos' : activeGroups}</span>
+            <span class="count">${activeGroups === 0 ? 'nenhum' : (activeGroups === totalGroups ? 'todos' : activeGroups)}</span>
           </header>
           <div class="group-chips">${renderGroupChips(selectedGroups)}</div>
         </div>

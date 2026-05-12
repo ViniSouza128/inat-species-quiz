@@ -27,6 +27,9 @@ function isNoResults(message) {
 function isExpired(message) {
   return /pergunta expirada|expirou|não encontrada/i.test(message);
 }
+function isNoFilters(message) {
+  return /sem-filtros|no-filters-selected/i.test(message);
+}
 
 function describeFilters(settings) {
   const parts = [];
@@ -66,6 +69,17 @@ function noResultsHints(settings) {
 export function classifyQuizError(error, settings) {
   const raw = error instanceof Error ? error.message : (typeof error === 'string' ? error : '');
 
+  if (isNoFilters(raw)) {
+    return {
+      icon: '🎯',
+      title: 'Sem filtros para buscar',
+      body: 'Você desmarcou todos os grupos biológicos e não há táxon específico selecionado. Não dá pra montar uma pergunta sem nenhum filtro.',
+      hints: [
+        'Vá em Configurações → Filtros e marque pelo menos um grupo (Aves, Insetos, etc.).',
+        'Ou adicione um táxon específico (ex.: Salticidae, Formicidae) — isso dispensa o filtro de grupo.'
+      ]
+    };
+  }
   if (isNetwork(raw)) {
     return {
       icon: '📡',

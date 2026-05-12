@@ -22,7 +22,7 @@ import {
   difficultyRules, currentBonus, remainingSecondsFor, scoreForAnswer,
   penaltyForDifficulty, nextStats, makeHistoryItem
 } from './quiz-engine.js';
-import { primeUiAudio, playUiSound } from './sounds.js';
+import { primeUiAudio, playUiSound, setUiVolume } from './sounds.js';
 import { escapeHtml } from './format.js';
 import {
   renderGameScreen, renderInfoModal,
@@ -232,6 +232,9 @@ async function fillPrefetchQueue() {
   const generation = state.generation;
   const needed = PREFETCH_TARGET - state.prefetchQueue.length;
   if (needed <= 0) return;
+  // Sem grupos e sem táxon → quiz bloqueado, nem chega a buscar.
+  const activeGroups = (state.settings.iconicTaxa || []).filter((v) => v && v !== 'all');
+  if (activeGroups.length === 0 && !state.settings.taxonId) return;
   state.prefetchInProgress = true;
 
   try {
@@ -359,6 +362,18 @@ async function nextQuestion() {
   stopTimer();
   render();
 
+  // Bloqueio: sem grupos E sem táxon, não há nada para perguntar. Lança
+  // sentinela "no-filters-selected" — classifyQuizError mapeia para uma
+  // mensagem específica orientando a marcar pelo menos um grupo.
+  const activeGroups = (state.settings.iconicTaxa || []).filter((v) => v && v !== 'all');
+  if (activeGroups.length === 0 && !state.settings.taxonId) {
+    state.question = null;
+    state.loading = false;
+    state.error = 'no-filters-selected';
+    render();
+    return;
+  }
+
   try {
     let next = takeQueuedQuestion();
     if (!next) {
@@ -454,8 +469,35 @@ function updateSettings(partial) {
   state.prefetchInProgress = false;
   state.prefetchQueue = loadQuestionCache(settingsKey());
   syncPrefetchPersist();
+
+  // Se a pergunta na tela não bate mais com os novos filtros, pula
+  // instantaneamente — usuário não fica olhando para uma Ave depois de
+  // mudar para Aracnídeos. Limpa o question antes do render para a tela
+  // mostrar loading enquanto a próxima carrega.
+  if (state.question && !isQuestionCompatible(state.question, state.settings)) {
+    state.question = null;
+    render();
+    void nextQuestion();
+    return;
+  }
+
   render();
   void fillPrefetchQueue();
+}
+
+/**
+ * Verifica se uma pergunta já carregada ainda bate com os filtros atuais.
+ *  • Se há grupos selecionados: o `iconicTaxonName` da resposta correta
+ *    precisa estar nessa lista.
+ *  • Conservador: se faltar dado para decidir, assume compatível.
+ */
+function isQuestionCompatible(question, settings) {
+  const answerIconic = question?.answer?.iconicTaxonName ?? null;
+  const activeGroups = (settings.iconicTaxa || []).filter((v) => v && v !== 'all');
+  if (activeGroups.length > 0 && activeGroups.length < ALL_GROUP_VALUES.length && answerIconic) {
+    if (!activeGroups.includes(answerIconic)) return false;
+  }
+  return true;
 }
 
 function resetStats() {
@@ -473,23 +515,44 @@ function clearHistory() {
   clearAllUserData();
 }
 
+/**
+ * Liga/desliga um grupo. Comportamento do "all":
+ *  - Se NÃO está com todos → marca todos.
+ *  - Se está com todos E há táxon ativo → mantém só o iconic necessário
+ *    para sustentar o táxon (ex.: Salticidae → só Aracnídeos sobra).
+ *  - Se está com todos E não há táxon → desmarca tudo (estado vazio).
+ *    A próxima tentativa de jogar mostra mensagem explicativa.
+ *
+ *  Para grupos individuais, alterna normalmente. Vazio é estado válido.
+ *  Se a mudança orfanar o táxon (ex.: remover Insecta com Formicidae
+ *  selecionado), abre o modal de confirmação.
+ */
 function toggleGroup(groupValue) {
-  // Calcula o novo conjunto SEM aplicar ainda — para checar conflito com
-  // o táxon atualmente selecionado.
+  const selectedGroups = normalizeGroups(state.settings.iconicTaxa);
   let next;
   if (groupValue === 'all') {
-    next = ['all', ...ALL_GROUP_VALUES];
+    const currentlyAll = selectedGroups.includes('all');
+    if (!currentlyAll) {
+      next = [...ALL_GROUP_VALUES];
+    } else if (state.settings.taxonId && state.settings.taxonIconicName
+               && ALL_GROUP_VALUES.includes(state.settings.taxonIconicName)) {
+      // Mantém apenas o iconic do táxon ativo (única forma de não
+      // orfanar o filtro do usuário).
+      next = [state.settings.taxonIconicName];
+    } else {
+      next = []; // vazio intencional — bloqueia o quiz com mensagem.
+    }
   } else {
-    const selectedGroups = normalizeGroups(state.settings.iconicTaxa.length > 0 ? state.settings.iconicTaxa : ['all', ...ALL_GROUP_VALUES]);
     const working = selectedGroups.filter((v) => v !== 'all');
     next = working.includes(groupValue)
       ? working.filter((v) => v !== groupValue)
       : [...working, groupValue];
   }
-  const candidate = next.length === 0 ? ['all', ...ALL_GROUP_VALUES] : normalizeGroups(next);
 
-  // Conflito: o táxon ativo é de um grupo que sumiu da seleção.
-  if (state.settings.taxonId && state.settings.taxonIconicName) {
+  // Conflito só faz sentido quando sobra algum grupo. Lista vazia é
+  // tratada pelo bloqueio do quiz (mensagem específica).
+  if (next.length > 0 && state.settings.taxonId && state.settings.taxonIconicName) {
+    const candidate = normalizeGroups(next);
     const conflict = detectIconicConflict(state.settings.taxonIconicName, candidate);
     if (conflict) {
       state.confirmModal = {
@@ -505,11 +568,7 @@ function toggleGroup(groupValue) {
     }
   }
 
-  if (next.length === 0) {
-    updateSettings({ iconicTaxa: ['all', ...ALL_GROUP_VALUES] });
-    return;
-  }
-  updateSettings({ iconicTaxa: candidate });
+  updateSettings({ iconicTaxa: normalizeGroups(next) });
 }
 
 /** Aplica um táxon selecionado, abrindo o modal de confirmação se houver
@@ -543,6 +602,21 @@ function resolvedTheme(themeSetting) {
   }
   return themeSetting === 'light' ? 'light' : 'dark';
 }
+
+// Global TAP em qualquer <button> ou [role="button"] do app. Excluímos
+// .choice (toca correct/wrong) e .fb-primary (toca advance) — esses já
+// têm sons próprios. Capture-phase para tocar antes do handler bubble
+// do click, dando feedback imediato.
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const btn = target.closest('button, [role="button"]');
+  if (!btn) return;
+  if (btn.classList.contains('choice')) return;
+  if (btn.classList.contains('fb-primary')) return;
+  primeUiAudio();
+  playUiSound('tap');
+}, { capture: true });
 
 document.addEventListener('click', async (event) => {
   // Prevent default em qualquer <button> — botões sem handler não devem
@@ -765,12 +839,30 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+// Amostra de volume — toca quando o usuário solta o slider (`change`) ou
+// clica na bolinha sem arrastar (`pointerup`). Os dois eventos são
+// idempotentes para volume porque setUiVolume é redundante (já foi setado
+// pelo `input`); só playUiSound importa aqui.
+function playVolumeSampleFromEvent(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (!target.classList.contains('volume-slider')) return;
+  const v = Number(target.value);
+  primeUiAudio();
+  setUiVolume(v);
+  playUiSound('volumeSample');
+}
+document.addEventListener('change', playVolumeSampleFromEvent);
+document.addEventListener('pointerup', playVolumeSampleFromEvent);
+
 // Input listeners (campos de busca e slider de volume)
 document.addEventListener('input', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
 
-  // Slider de volume — sincroniza pintura + valor exibido em tempo real
+  // Slider de volume — sincroniza pintura + valor exibido em tempo real,
+  // sem re-render (para não interromper o drag). A amostra sonora de
+  // referência (`volumeSample`) é tocada no pointerup/change, abaixo.
   if (target.classList.contains('volume-slider')) {
     const v = Number(target.value);
     const pct = `${v}%`;
@@ -783,7 +875,9 @@ document.addEventListener('input', (event) => {
       const icon = parent.querySelector('.vol-icon');
       if (icon) icon.dataset.vol = String(v);
     }
-    // Persiste sem re-render para não interromper o drag
+    // Aplica volume em tempo real (master gain do AudioContext) para que
+    // a próxima amostra reflita o valor atual.
+    setUiVolume(v);
     state.settings = { ...state.settings, soundVolume: v, choices: 4 };
     saveSettings(state.settings);
     return;
@@ -884,6 +978,10 @@ applySettingsTheme();
     saveSettings(state.settings);
   }
 }
+
+// Aplica o volume salvo ao masterGain do AudioContext já no boot — assim o
+// primeiro `playUiSound` respeita o nível que o usuário deixou setado.
+setUiVolume(typeof state.settings.soundVolume === 'number' ? state.settings.soundVolume : 60);
 
 render();
 void fillPrefetchQueue();

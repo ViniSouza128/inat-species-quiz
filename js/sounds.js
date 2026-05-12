@@ -13,6 +13,11 @@ let ctx = null;
 let enabled = true;
 let masterGain = null;
 let compressor = null;
+// Volume linear (0..1) controlado pelo slider em Configurações. Multiplica
+// o ganho base do masterGain. `setUiVolume` também desativa `enabled`
+// quando o volume cai para 0 (mudo).
+let uiVolume = 0.6;
+const MASTER_BASE_GAIN = 0.62;
 
 /** Cria/retoma o AudioContext. Compatível com Safari (webkitAudioContext). */
 function getContext() {
@@ -30,7 +35,7 @@ function getContext() {
 function getOutput(audio) {
   if (!masterGain) {
     masterGain = audio.createGain();
-    masterGain.gain.value = 0.62;
+    masterGain.gain.value = MASTER_BASE_GAIN * uiVolume;
   }
   if (!compressor) {
     compressor = audio.createDynamicsCompressor();
@@ -171,6 +176,16 @@ function soundMap(kind) {
         { at: 0.004, freq: 1046.5, duration: 0.09, gain: 0.021, type: 'sine', filterFreq: 4200 },
         { at: 0.105, freq: 784, duration: 0.08, gain: 0.015, type: 'triangle', filterFreq: 3400 }
       ];
+    case 'tap':
+      // Click curtíssimo e suave (~30ms) — feedback para qualquer botão.
+      return [
+        { at: 0, freq: 880, duration: 0.035, gain: 0.012, type: 'triangle', filterFreq: 3800 }
+      ];
+    case 'volumeSample':
+      // Tom de referência (A4) para o slider de volume sentir o nível.
+      return [
+        { at: 0, freq: 440, duration: 0.18, gain: 0.052, type: 'sine', filterFreq: 3200 }
+      ];
     default:
       return [];
   }
@@ -185,6 +200,17 @@ function vibrateForSound(kind) {
 
 export function setUiSoundEnabled(next) {
   enabled = Boolean(next);
+}
+
+/** Ajusta o volume global da UI (0..100). 0 = mudo. Atualiza imediatamente
+ *  o masterGain.gain se o contexto já existir. */
+export function setUiVolume(volume0to100) {
+  const clamped = Math.max(0, Math.min(100, Number(volume0to100) || 0));
+  uiVolume = clamped / 100;
+  enabled = clamped > 0;
+  if (masterGain) {
+    masterGain.gain.value = MASTER_BASE_GAIN * uiVolume;
+  }
 }
 
 /** Aquece o AudioContext (precisa ser chamado em resposta a interação). */

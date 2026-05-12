@@ -76,7 +76,9 @@ function normalizeStoredGroups(value) {
   if (Array.isArray(value)) {
     const onlyActual = ALL_GROUP_VALUES.filter((item) => value.includes(item));
     if (onlyActual.length === ALL_GROUP_VALUES.length) return ['all', ...ALL_GROUP_VALUES];
-    return onlyActual.length > 0 ? onlyActual : DEFAULT_SETTINGS.iconicTaxa;
+    // Vazio é estado válido — significa "nenhum grupo selecionado". O
+    // main.js bloqueia o quiz nesse caso (a menos que haja taxonId).
+    return onlyActual;
   }
   if (typeof value === 'string') {
     if (value === 'all') return ['all', ...ALL_GROUP_VALUES];
