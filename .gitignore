@@ -10,3 +10,13 @@ Thumbs.db
 # Caches locais (não devem existir nesta pasta, mas defensivo)
 node_modules/
 .cache/
+
+# Backup local da versão antiga React+Node (consultar com `git checkout redesign-v2`).
+# Não deve ir pro GitHub — é só para o usuário navegar sem precisar de git.
+_bkp-react-node/
+
+# Screenshots locais usadas em QA — não fazem parte do site publicado.
+static-screenshots/
+
+# Workspace do Claude Code (worktrees temporárias, configs locais).
+.claude/
